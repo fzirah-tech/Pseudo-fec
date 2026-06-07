@@ -1,0 +1,20 @@
+# Le mapping contient des données réelles : NE JAMAIS versionner ni synchroniser.
+_local_mapping/*
+!_local_mapping/.gitkeep
+*.map.csv
+*.map.json
+
+# Journaux locaux
+logs/*
+!logs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Sorties de test
+/tmp_out/
