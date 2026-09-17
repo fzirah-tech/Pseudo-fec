@@ -17,9 +17,55 @@ comptable / DAF externalisé de piloter en langage naturel :
 
 ## Statut
 
-**Cadrage — aucun code livré à ce stade.** Ce dossier documente la
-trajectoire retenue ; le développement effectif (phase 3 notamment) reste à
-faire.
+**v0.1 — pilote testable, sans développement.** L'assistant repose
+uniquement sur des skills et un bloc de préférences, exécutés par Claude via
+les connecteurs existants. Aucun code à déployer. Les phases 2 et 3 restent
+à faire.
+
+> 🔓 **Ce dépôt est PUBLIC.** N'y versionnez jamais de noms de clients,
+> d'identifiants de sociétés PennyLane ni d'adresses réelles. Le référentiel
+> rempli (`referentiel-dossiers.yaml`) est exclu du suivi Git ; seul
+> l'exemple fictif est versionné.
+
+## Contenu
+
+| Fichier | Rôle |
+|---|---|
+| `preferences-claude.md` | Comportement transverse (mode vocal, politique d'autonomie, confidentialité). À coller dans les préférences Claude. |
+| `referentiel-dossiers.exemple.yaml` | Lien entre ce que vous dites à l'oral et les identifiants de chaque outil. À copier et remplir localement. |
+| `skills/brief-cabinet/` | Brief quotidien : retards, échéances, mails en attente. |
+| `skills/mails-cabinet/` | Tri des mails et préparation des brouillons de réponse. |
+| `skills/dossier-pennylane/` | Consultation d'un dossier comptable, en lecture seule. |
+
+Le reporting Excel ne fait pas l'objet d'un skill dédié : il s'appuie sur vos
+skills existants `excel-reporting-avance` et `xlsx`, que l'assistant enchaîne
+avec les données consultées.
+
+## Mise en service
+
+1. Coller le contenu de `preferences-claude.md` dans **Réglages →
+   Préférences personnelles** sur claude.ai.
+2. Copier `referentiel-dossiers.exemple.yaml` en `referentiel-dossiers.yaml`,
+   le remplir avec vos dossiers réels, et le joindre à un Projet Claude dédié
+   (il reste local, hors Git).
+3. Charger les trois dossiers de `skills/` dans **Réglages → Capacités →
+   Skills**.
+4. Vérifier que les connecteurs Gmail ou Outlook, Todoist et PennyLane sont
+   actifs sur le compte.
+5. Tester en vocal depuis l'app mobile, dans cet ordre : « fais-moi le
+   brief », puis « trie mes mails », puis « où en est le dossier X ».
+
+## Ce qu'il faut observer pendant le test
+
+Le pilote sert à décider si la phase 3 vaut l'investissement. Trois points à
+surveiller sur deux à trois semaines d'usage réel :
+
+- La reconnaissance vocale tient-elle sur les noms de dossiers et le
+  vocabulaire métier, ou passez-vous votre temps à corriger ?
+- La politique d'autonomie est-elle au bon niveau, ou demande-t-elle
+  validation trop souvent (friction) ou pas assez (inconfort) ?
+- Le gain de temps est-il réel sur le brief et le tri des mails, ou
+  reprenez-vous la main de toute façon ?
 
 ## Connecteurs envisagés
 
@@ -50,9 +96,9 @@ professionnel) et la traçabilité des actions.
 
 ## Feuille de route
 
-1. **Pilote sans développement** — formaliser des prompts/skills réutilisables
-   pour les 4 cas d'usage ci-dessus, testés via l'app mobile Claude en mode
-   vocal, sans écrire de code dans ce dossier.
+1. **Pilote sans développement** — *livré (v0.1)*. Skills et préférences
+   réutilisables pour les cas d'usage ci-dessus, testables via l'app mobile
+   Claude en mode vocal, sans code à déployer.
 2. **Gouvernance** — cloisonnement des dossiers clients, traçabilité des
    actions, revue de la politique d'autonomie ci-dessus avant extension.
 3. **Compagnon poste de travail** — capture vocale continue côté poste de

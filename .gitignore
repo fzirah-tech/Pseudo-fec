@@ -4,6 +4,9 @@ _local_mapping/*
 *.map.csv
 *.map.json
 
+# Référentiel de l'assistant vocal : contient des noms de clients réels.
+assistant-vocal/referentiel-dossiers.yaml
+
 # Journaux locaux
 logs/*
 !logs/.gitkeep

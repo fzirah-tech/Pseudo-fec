@@ -1,0 +1,53 @@
+# Référentiel des dossiers — EXEMPLE À DONNÉES FICTIVES
+#
+# Ce fichier fait le lien entre ce que vous DITES à l'oral et les identifiants
+# techniques de chaque outil. Sans lui, chaque demande vocale impose une
+# désambiguïsation ("quel dossier ?", "quel company_id ?").
+#
+# Pour l'utiliser réellement :
+#   1. copiez-le en `referentiel-dossiers.yaml` (exclu du suivi Git) ;
+#   2. remplissez-le avec vos dossiers réels ;
+#   3. joignez-le à votre Projet Claude (ou collez-le dans ses instructions).
+#
+# ATTENTION : le fichier rempli contient des noms de clients réels. Ce dépôt
+# est PUBLIC — ne versionnez jamais la version réelle.
+
+dossiers:
+  - nom: "Dupont Menuiserie SARL"
+    alias_vocaux: ["Dupont", "la menuiserie", "Dupont menuiserie"]
+    pennylane_company_id: 100001
+    todoist_projet: "Dupont Menuiserie"
+    domaines_mail: ["dupont-menuiserie.fr"]
+    contacts: ["m.dupont@dupont-menuiserie.fr"]
+    cloture: "31/12"
+    tva: "réel normal — CA3 mensuelle, échéance le 19"
+    mission: "tenue + révision + liasse"
+
+  - nom: "Cabinet Martin & Associés"
+    alias_vocaux: ["Martin", "le cabinet Martin"]
+    pennylane_company_id: 100002
+    todoist_projet: "Martin & Associés"
+    domaines_mail: ["martin-associes.com"]
+    contacts: ["contact@martin-associes.com"]
+    cloture: "30/06"
+    tva: "réel simplifié — CA12"
+    mission: "révision + conseil DAF"
+
+  - nom: "Techno Diffusion SAS"
+    alias_vocaux: ["Techno", "Techno Diffusion"]
+    pennylane_company_id: 100003
+    todoist_projet: "Techno Diffusion"
+    domaines_mail: ["technodiffusion.fr", "technodiffusion.eu"]
+    contacts: ["compta@technodiffusion.fr", "dg@technodiffusion.fr"]
+    cloture: "31/12"
+    tva: "réel normal — CA3 mensuelle"
+    mission: "DAF externalisé — reporting mensuel"
+
+# Expéditeurs administratifs récurrents, tous dossiers confondus.
+# Sert au tri des mails : ces expéditeurs ne sont jamais des clients.
+expediteurs_administratifs:
+  - "dgfip.finances.gouv.fr"
+  - "urssaf.fr"
+  - "net-entreprises.fr"
+  - "infogreffe.fr"
+  - "impots.gouv.fr"
