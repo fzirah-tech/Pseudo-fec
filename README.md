@@ -1,13 +1,25 @@
 # pseudo-fec — Pseudonymisation LOCALE de fichiers FEC
 
+> 📁 **Ce dépôt héberge deux outils indépendants et sans rapport
+> fonctionnel** :
+> - `pseudo_fec/` (ce dossier, décrit ci-dessous) — pseudonymisation FEC,
+>   **100 % local et hors-ligne**.
+> - `assistant-vocal/` — assistant vocal connecté (mails, tâches, PennyLane,
+>   Excel), voir son propre [README](./assistant-vocal/README.md).
+>
+> **La garantie « aucun appel réseau » ci-dessous ne concerne que
+> `pseudo_fec/`.** Le dossier `assistant-vocal/` est, par nature, connecté en
+> permanence à des services tiers.
+
 Outil **100 % local et hors-ligne** pour pseudonymiser les identités d'un
 **Fichier des Écritures Comptables (FEC)**, afin de pouvoir l'analyser dans un
 environnement cloud (p. ex. Claude Cowork) **sans exposer les noms réels**, puis
 **ré-identifier en local** les livrables produits (Word, Excel, texte).
 
-> ⚠️ **Aucun appel réseau.** L'outil n'importe ni `requests`, ni `urllib`, ni
-> `socket`, ni aucun client HTTP, et n'envoie aucune télémétrie. Il fonctionne
-> entièrement hors-ligne sur Windows ou macOS.
+> ⚠️ **Aucun appel réseau (module `pseudo_fec/` uniquement).** L'outil
+> n'importe ni `requests`, ni `urllib`, ni `socket`, ni aucun client HTTP, et
+> n'envoie aucune télémétrie. Il fonctionne entièrement hors-ligne sur
+> Windows ou macOS.
 
 ## Principe
 
