@@ -145,3 +145,15 @@ def test_format_pennylane_reel():
     aux = {x[6] for x in rows if x[6]}
     assert any(a.startswith(("401", "411")) and not a.isdigit() for a in aux)   # nom incrusté dans CompAuxNum
     assert f.serialize(iter(rows)) == s.data
+
+
+def test_variante_pennylane_avec_suffixes_de_tva():
+    """Comptes de 12 chiffres et taux dans CompteLib : mêmes totaux, mêmes classes de tiers, aucun faux nom."""
+    base = make_fec("pennylane", "utf-8")
+    suf = make_fec("pennylane", "utf-8", tva_suffix=True)
+    fb, fs = parse_fec(base.data, base.filename), parse_fec(suf.data, suf.filename)
+    rb, rs = analyse(fb, PREF, SIREN), analyse(fs, PREF, SIREN)
+    assert rs["total_debit"] == rb["total_debit"] and rs["lignes"] == rb["lignes"] and not rs["issues"]
+    assert rs["classes_tiers"] == rb["classes_tiers"] and rs["comptes"] >= rb["comptes"]
+    assert any(len(r[4]) == 12 for r in fs.rows())
+    assert fs.serialize(fs.rows()) == suf.data

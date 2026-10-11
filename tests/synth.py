@@ -60,7 +60,8 @@ def _amt(v: Decimal, style: str, thousands: bool) -> str:
 
 
 def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024, seed: int = 7,
-             bom: bool = False, sep: str = "\t", n_entries: int = 60) -> Synth:
+             bom: bool = False, sep: str = "\t", n_entries: int = 60,
+             tva_suffix: bool = False) -> Synth:
     rnd = random.Random(seed + year)
     cabinet = style == "cabinet"
     penny = style == "compte_individualise"
@@ -137,6 +138,11 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
             add("BQ", "Banque", m, d, c, cl, a, al, f"BQ{i:04d}", lib, ttc, Decimal(0), "AA")
             add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{i:04d}", lib, Decimal(0), ttc)
 
+    if tva_suffix:  # variante Pennylane « avec suffixes de TVA » : comptes de 12 chiffres, taux dans CompteLib
+        for r in lines:
+            if r[4][:3] in ("607", "706", "445", "625") and len(r[4]) == 6:
+                r[4] += "002000"
+                r[5] += " 20%"
     if pl:
         for r in lines:
             if r[0] == "OD" and int(r[2]) % 2 == 0:
