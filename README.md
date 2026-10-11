@@ -40,7 +40,7 @@ Les tests n'utilisent que des données synthétiques (`tests/synth.py`) ; ne jam
 
 - Pas encore de verrouillage multi-utilisateurs ni de journal d'audit (jalon h) : **un seul utilisateur à la fois** en pilote.
 - Détection de l'encodage 8 bits (cp1252 / ISO-8859-15) heuristique ; la réécriture à l'identique est vérifiée à l'import.
-- Le style « Pennylane » des FEC de test est une **hypothèse** : à confirmer sur un export réel.
+- Les FEC de test « Pennylane » reproduisent la structure d'un export Pennylane réel (vérifié sur un échantillon) ; le style « compte individualisé » reste à valider sur un cas réel.
 - Fichier jusqu'à 200 Mo : téléversé en mémoire (prévoir ~3 à 4 fois la taille en RAM).
 - Interface testée avec Chromium sous Linux ; à valider sur Edge / Windows 11.
 - Build Windows (PyInstaller), signature et contrôle de version : jalon (i), à exécuter sur un poste Windows.

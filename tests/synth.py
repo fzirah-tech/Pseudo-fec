@@ -5,8 +5,11 @@ Styles :
 - "cabinet"   : reproduit les particularités observées sur un export réel
                 (CRLF, 8 bits, en-têtes « ␣Debit␣ », EcritureDate JJ/MM/AAAA,
                 montants « 1 234,56 », « - » pour zéro, salariés en 421 individualisés) ;
-- "pennylane" : HYPOTHÈSE de travail (non vérifiée sur export réel) : tiers dans
-                CompteLib / CompteNum (ex. 401DUPBAT), sans compte auxiliaire.
+- "pennylane" : reproduit un export Pennylane réel (UTF-8 sans BOM, LF, dates AAAAMMJJ,
+                un seul 401/411 général, tiers en CompAuxNum/CompAuxLib, CompAuxNum
+                incrustant le nom, valeur "" littérale dans EcritureLib) ;
+- "compte_individualise" : tiers individualisés en compte général (ex. 401DUPBAT),
+                CompteLib = nom, sans auxiliaire (cas à gérer selon le logiciel).
 """
 
 from __future__ import annotations
@@ -60,9 +63,11 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
              bom: bool = False, sep: str = "\t", n_entries: int = 60) -> Synth:
     rnd = random.Random(seed + year)
     cabinet = style == "cabinet"
-    penny = style == "pennylane"
+    penny = style == "compte_individualise"
+    pl = style == "pennylane"
     lines: list[list[str]] = []
     num = [0]
+    i_cur = [0]
 
     def date(m: int, d: int) -> tuple[str, str]:
         ymd = f"{year}{m:02d}{d:02d}"
@@ -77,12 +82,16 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
     def tiers(prefix: str, name: str, code: str) -> tuple[str, str, str, str]:
         if penny:
             return f"{prefix}{code}", name, "", ""
+        if pl:
+            aux = f"{prefix}{code}" if i_cur[0] % 2 else str(rnd.randint(10000, 99999))
+            return prefix, "Fournisseurs" if prefix == "401" else "Clients", aux, name
         if cabinet:
             return f"{prefix}000000", "Fournisseurs" if prefix == "401" else "Clients", f"{rnd.randint(1, 99)}{code}", name
         return f"{prefix}000", "Fournisseurs" if prefix == "401" else "Clients", ("F" if prefix == "401" else "C") + code, name
 
     for i in range(n_entries):
         num[0] += 1
+        i_cur[0] = i
         m, d = 1 + i % 12, 1 + (i * 3) % 27
         kind = i % 6
         ht = Decimal(rnd.randint(100, 9000)) + Decimal(rnd.randint(0, 99)) / 100
@@ -128,6 +137,10 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
             add("BQ", "Banque", m, d, c, cl, a, al, f"BQ{i:04d}", lib, ttc, Decimal(0), "AA")
             add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{i:04d}", lib, Decimal(0), ttc)
 
+    if pl:
+        for r in lines:
+            if r[0] == "OD" and int(r[2]) % 2 == 0:
+                r[10] = '""'
     header = list(CANON)
     if cabinet:
         header[header.index("Debit")], header[header.index("Credit")] = " Debit ", " Credit "

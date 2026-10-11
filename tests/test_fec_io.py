@@ -14,7 +14,8 @@ PREF = DEFAULT_CABINET["priority_prefixes"]
 @pytest.mark.parametrize("style,enc,bom,sep", [
     ("standard", "utf-8", False, "\t"), ("standard", "utf-8", True, "\t"),
     ("standard", "utf-8", False, "|"), ("cabinet", "cp1252", False, "\t"),
-    ("pennylane", "iso-8859-15", False, "\t"), ("pennylane", "utf-8", False, "|"),
+    ("compte_individualise", "iso-8859-15", False, "\t"), ("pennylane", "utf-8", False, "\t"),
+    ("compte_individualise", "utf-8", False, "|"),
 ])
 def test_lecture_controle_et_reecriture_identique(style, enc, bom, sep):
     s = make_fec(style, enc, bom=bom, sep=sep)
@@ -41,8 +42,10 @@ def test_modes_de_tiers_par_classe():
     std = analyse(parse_fec(make_fec("standard").data, "x"), PREF)["classes_tiers"]
     assert std["tiers_commerciaux"]["mode"] == "auxiliaire"
     assert std["personnel"]["mode"] == "compte / libellé"
-    penny = analyse(parse_fec(make_fec("pennylane").data, "x"), PREF)["classes_tiers"]
+    penny = analyse(parse_fec(make_fec("compte_individualise").data, "x"), PREF)["classes_tiers"]
     assert penny["tiers_commerciaux"]["mode"] == "compte / libellé" and penny["tiers_commerciaux"]["comptes"] > 3
+    pl = analyse(parse_fec(make_fec("pennylane").data, "x"), PREF)["classes_tiers"]
+    assert pl["tiers_commerciaux"]["mode"] == "auxiliaire" and pl["tiers_commerciaux"]["comptes"] == 2
 
 
 def test_montants_formats_reels():
@@ -120,7 +123,7 @@ def test_lignes_vides_signalees():
 
 
 def test_rapport_sans_nom_de_tiers():
-    for st, enc in (("standard", "utf-8"), ("cabinet", "cp1252"), ("pennylane", "utf-8")):
+    for st, enc in (("standard", "utf-8"), ("cabinet", "cp1252"), ("pennylane", "utf-8"), ("compte_individualise", "utf-8")):
         s = make_fec(st, enc)
         blob = repr(analyse(parse_fec(s.data, s.filename), PREF))
         for n in s.names:
@@ -129,3 +132,16 @@ def test_rapport_sans_nom_de_tiers():
 
 def test_18_colonnes_normees():
     assert len(CANON) == 18
+
+
+def test_format_pennylane_reel():
+    s = make_fec("pennylane", "utf-8")
+    assert not s.data.startswith(b"\xef\xbb\xbf") and b"\r" not in s.data      # UTF-8 sans BOM, LF
+    f = parse_fec(s.data, s.filename)
+    r = analyse(f, PREF, SIREN)
+    assert r["encoding"] == "utf-8" and r["newline"] == "LF" and not r["issues"]
+    rows = list(f.rows())
+    assert any(x[10] == '""' for x in rows)                      # valeur "" littérale conservée
+    aux = {x[6] for x in rows if x[6]}
+    assert any(a.startswith(("401", "411")) and not a.isdigit() for a in aux)   # nom incrusté dans CompAuxNum
+    assert f.serialize(iter(rows)) == s.data
