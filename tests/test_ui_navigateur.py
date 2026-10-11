@@ -54,3 +54,35 @@ def test_parcours_navigateur(cfg, tmp_path):
     finally:
         srv.shutdown()
     assert erreurs == []
+
+
+def test_aide_diagnostic_et_demo_en_un_clic(cfg):
+    exe = next((c for c in CANDIDATS if Path(c).exists()), None)
+    if exe is None:
+        pytest.skip("Chromium introuvable")
+    srv = PseudoFecServer(cfg)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    erreurs = []
+    try:
+        with pw.sync_playwright() as p:
+            b = p.chromium.launch(executable_path=exe, args=["--no-sandbox"])
+            pg = b.new_page()
+            pg.on("pageerror", lambda e: erreurs.append(str(e)))
+            pg.goto(srv.url)
+            pg.wait_for_selector("#pp")
+            pg.click("#btn-help")                                               # l'aide est accessible avant la phrase secrète
+            pg.wait_for_selector("h1:has-text('Aide et test')")
+            pg.click("text=Lancer l'auto-diagnostic")
+            pw.expect(pg.locator("text=Tout fonctionne")).to_be_visible(timeout=30000)
+            pg.click("#btn-help")                                               # retour
+            pg.wait_for_selector("#pp")
+            pg.fill("#pp", TEST_PASS); pg.fill("#pp2", TEST_PASS); pg.click("text=Déverrouiller")
+            pg.wait_for_selector("h1:has-text('Dossiers')")
+            pg.click("#btn-help"); pg.wait_for_selector("h1:has-text('Aide et test')")
+            pg.click("text=Lancer la démo >> nth=0")
+            pg.wait_for_selector("h1:has-text('Import et contrôle')", timeout=30000)
+            pw.expect(pg.locator("text=Contrôles passés")).to_have_count(2, timeout=10000)
+            b.close()
+    finally:
+        srv.shutdown()
+    assert erreurs == []

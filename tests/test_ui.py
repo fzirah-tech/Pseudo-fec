@@ -237,3 +237,51 @@ def test_detection_sans_nom_dans_les_logs(app, capfd):
     out, err = capfd.readouterr()
     for n in REAL_NAMES:
         assert n not in out and n not in err
+
+
+# ---------------------------------------------------------------- aide, démonstration, diagnostic
+
+def test_autodiagnostic_sans_donnee_de_dossier(app):
+    st, d = app.req("GET", "/api/diagnostic")
+    assert st == 200 and d["ok"], d["texte"]
+    noms = {c["nom"] for c in d["checks"]}
+    assert {"Python", "Chiffrement des tables", "Lecture et réécriture de FEC", "Détection des noms", "Réseau"} <= noms
+    assert "127.0.0.1" in d["texte"]
+    for n in REAL_NAMES:
+        assert n not in d["texte"]
+    assert str(Path.home()) not in d["texte"] or str(Path.home()) == "/"        # chemin personnel masqué
+
+
+def test_demo_en_un_clic(app):
+    assert app.req("POST", "/api/demo/create", {"style": "cabinet"})[0] == 400          # phrase secrète requise
+    app.req("POST", "/api/unlock", {"passphrase": TEST_PASS, "confirm": TEST_PASS})
+    st, out = app.req("POST", "/api/demo/create", {"style": "cabinet"})
+    assert st == 200 and out["code"] == "DEMO-001" and out["dossier"] == "DEMO-001"
+    fecs = app.req("GET", "/api/fec/list")[1]["fecs"]
+    assert len(fecs) == 2 and all(f["equilibre"] and not f["bloquant"] for f in fecs)
+    assert {f["exercice"] for f in fecs} == {"2024", "2025"}
+    st, det = app.req("POST", "/api/detect", {})
+    assert st == 200 and any(c["cat"] == "SAL" for c in det["candidats"])
+    st, out2 = app.req("POST", "/api/demo/create", {"style": "pennylane"})
+    assert out2["code"] == "DEMO-002"                                                    # jamais d'écrasement
+    assert app.req("POST", "/api/demo/create", {"style": "inconnu"})[0] == 400
+
+
+def test_telechargement_du_fec_fictif(app):
+    c = http.client.HTTPConnection("127.0.0.1", app.port)
+    c.request("GET", "/api/demo/fec?style=pennylane&year=2025", headers={"Host": f"127.0.0.1:{app.port}", "Cookie": app.cookie, "X-PF-Token": app.tok})
+    r = c.getresponse(); data = r.read()
+    assert r.status == 200 and "attachment" in r.getheader("Content-Disposition") and b"JournalCode" in data
+    assert app.req("GET", "/api/demo/fec?style=../../etc")[0] == 400
+    assert app.req("GET", "/api/demo/fec?year=abc")[0] in (400, 500)
+
+
+def test_ouverture_de_dossier_limitee_a_deux_dossiers_connus(app, monkeypatch):
+    import os
+    opened = []
+    monkeypatch.setattr(os, "startfile", lambda p: opened.append(p), raising=False)
+    assert app.req("POST", "/api/open-folder", {"which": "tables"})[1]["ok"]
+    assert app.req("POST", "/api/open-folder", {"which": "outputs"})[1]["ok"]
+    assert len(opened) == 2
+    assert app.req("POST", "/api/open-folder", {"which": "C:/Windows"})[0] == 400
+    assert len(opened) == 2

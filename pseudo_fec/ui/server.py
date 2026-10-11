@@ -113,7 +113,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path.startswith("/api/"):
             if not self._authed(api=True):
                 return self._err(HTTPStatus.UNAUTHORIZED, "Non autorisé.")
-            return self._dispatch("GET", url.path, b"")
+            return self._dispatch("GET", url.path, b"", q)
         self._err(HTTPStatus.NOT_FOUND, "Introuvable.")
 
     # ---- POST
@@ -133,14 +133,17 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length else b""
         self._dispatch("POST", urllib.parse.urlsplit(self.path).path, body)
 
-    def _dispatch(self, method: str, path: str, body: bytes) -> None:
+    def _dispatch(self, method: str, path: str, body: bytes, query: dict[str, list[str]] | None = None) -> None:
         self.server.touch()
         try:
-            result = self.server.app.handle(method, path, body, self.headers)
+            result = self.server.app.handle(method, path, body, self.headers, query)
         except PseudoFecError as e:
             return self._err(HTTPStatus.BAD_REQUEST, str(e))
         except Exception:  # message générique : une trace pourrait citer des données
             return self._err(HTTPStatus.INTERNAL_SERVER_ERROR, "Erreur interne (aucun détail affiché par confidentialité).")
+        if "_download" in result:
+            dl = result["_download"]
+            return self._send(HTTPStatus.OK, dl["data"], dl["ctype"], {"Content-Disposition": f'attachment; filename="{dl["name"]}"'})
         if result.get("_quit"):
             self._json(HTTPStatus.OK, {"ok": True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -153,6 +156,7 @@ class PseudoFecServer(_Server):
         super().__init__(("127.0.0.1", port), Handler)
         self.token = secrets.token_urlsafe(32)
         self.app = AppState(cfg)
+        self.app.listen = (self.server_address[0], self.server_address[1])
         self._last = time.monotonic()
         self._idle = idle_timeout_s
         if idle_timeout_s:

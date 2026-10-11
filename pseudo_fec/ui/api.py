@@ -8,7 +8,11 @@ import urllib.parse
 from typing import Any
 
 from .. import __version__, mapping
+import os
+
+from .. import diagnostic
 from ..config import Config
+from ..demo_data import DEMO_FICHE, DEMO_STYLES, make_fec
 from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload
 from ..detection import CATS, detect
 from ..generic_list import Whitelist, add_entry
@@ -26,6 +30,7 @@ class AppState:
         self.store: mapping.TableStore | None = None
         self.fecs: dict[str, tuple[FecFile, dict[str, Any]]] = {}
         self.detection: dict[str, Any] | None = None
+        self.listen: tuple[str, int] | None = None
 
     def close(self) -> None:
         with self.lock:
@@ -35,7 +40,8 @@ class AppState:
             self.detection = None
 
     # ------------------------------------------------------------ routage
-    def handle(self, method: str, path: str, body: bytes, headers: Any) -> dict[str, Any]:
+    def handle(self, method: str, path: str, body: bytes, headers: Any, query: dict[str, list[str]] | None = None) -> dict[str, Any]:
+        query = query or {}
         with self.lock:
             data = json.loads(body) if body and path != "/api/fec/upload" else {}
             routes = {
@@ -54,6 +60,10 @@ class AppState:
                 ("POST", "/api/detect"): self.run_detection,
                 ("POST", "/api/entities/save"): lambda: self.save_entities(data),
                 ("POST", "/api/whitelist/add"): lambda: self.whitelist_add(data),
+                ("GET", "/api/diagnostic"): self.diagnostic,
+                ("POST", "/api/demo/create"): lambda: self.demo_create(data),
+                ("GET", "/api/demo/fec"): lambda: self.demo_fec(query),
+                ("POST", "/api/open-folder"): lambda: self.open_folder(data),
                 ("POST", "/api/quit"): lambda: {"_quit": True},
             }
             fn = routes.get((method, path))
@@ -178,3 +188,52 @@ class AppState:
         s.payload.setdefault("whitelist_log", []).append(trace)
         s.save(int(self.cfg.get("versions_keep") or 50))
         return {"ok": True, "whitelist": self.cfg.cabinet["whitelist"]}
+
+    # ------------------------------------------------------------ aide, démonstration, diagnostic
+    def diagnostic(self) -> dict[str, Any]:
+        checks = diagnostic.run_checks(self.cfg, self.listen)
+        return {"checks": checks, "texte": diagnostic.as_text(checks), "ok": all(c["ok"] for c in checks)}
+
+    def demo_fec(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        style = (query.get("style") or ["cabinet"])[0]
+        if style not in DEMO_STYLES:
+            raise PseudoFecError("Style inconnu.")
+        year = int((query.get("year") or ["2024"])[0])
+        if not 2000 <= year <= 2100:
+            raise PseudoFecError("Année invalide.")
+        s = make_fec(style, DEMO_STYLES[style][0], year=year)
+        return {"_download": {"name": f"DEMO-FEC-{style}-{year}.txt", "ctype": "text/plain", "data": s.data}}
+
+    def demo_create(self, d: dict[str, Any]) -> dict[str, Any]:
+        """Crée un dossier de démonstration (données fictives) avec deux exercices déjà importés."""
+        phrase = self._need_pass()
+        style = str(d.get("style", "cabinet"))
+        if style not in DEMO_STYLES:
+            raise PseudoFecError("Style inconnu.")
+        existing = set(mapping.list_dossiers(self.cfg.tables_root))
+        n = 1
+        while f"DEMO-{n:03d}" in existing:
+            n += 1
+        code = f"DEMO-{n:03d}"
+        payload = new_payload(code)
+        apply_fiche(payload, DEMO_FICHE)
+        self.store = mapping.TableStore.create(self.cfg.tables_root, code, phrase, payload)
+        self.fecs.clear()
+        self.detection = None
+        for year in (2024, 2025):
+            s = make_fec(style, DEMO_STYLES[style][0], year=year, n_entries=120)
+            name = f"DEMO-{style}-{s.filename}"
+            fec = parse_fec(s.data, name)
+            self.fecs[name] = (fec, analyse(fec, self.cfg.priority_prefixes, payload["fiche"]["societe"]["siren"]))
+        return {**self.state(), "code": code}
+
+    def open_folder(self, d: dict[str, Any]) -> dict[str, Any]:
+        which = d.get("which")
+        path = {"tables": self.cfg.tables_root, "outputs": self.cfg.outputs_root}.get(which)
+        if path is None:
+            raise PseudoFecError("Dossier inconnu.")
+        path.mkdir(parents=True, exist_ok=True)
+        if hasattr(os, "startfile"):
+            os.startfile(str(path))  # type: ignore[attr-defined]  # Windows : ouvre l'Explorateur
+            return {"ok": True, "message": "Dossier ouvert dans l'Explorateur."}
+        return {"ok": False, "message": "Ouverture automatique disponible sous Windows : " + diagnostic.mask(path)}

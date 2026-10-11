@@ -33,3 +33,4 @@ PSEUDO/
 REEL/
 *.part
 .venv/
+wheels/

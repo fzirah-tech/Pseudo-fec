@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Démarrer Pseudo-FEC</title>
+<style>
+:root{--bg:#f6f5f3;--card:#fff;--ink:#2b2f33;--muted:#6b7077;--navy:#33445c;--line:#d9d5ce;--taupe:#a39a8e;--ok:#2f6f4f;--warn:#9a6b00}
+@media (prefers-color-scheme:dark){:root{--bg:#1f2326;--card:#2a2f33;--ink:#e8e6e2;--muted:#9aa0a6;--navy:#8aa0c0;--line:#40464b;--taupe:#8d857a;--ok:#6fbf94;--warn:#e0b050}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Segoe UI",system-ui,sans-serif}
+main{max-width:820px;margin:0 auto;padding:28px 16px 56px}
+h1{font-size:26px;color:var(--navy);margin:0 0 4px}h2{font-size:18px;color:var(--navy);margin:32px 0 8px}
+.lead{color:var(--muted);margin:0 0 18px}
+.step{display:grid;grid-template-columns:44px 1fr;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
+.n{width:36px;height:36px;border-radius:50%;background:var(--navy);color:var(--card);display:grid;place-items:center;font-weight:700}
+.step h3{margin:0 0 4px;font-size:17px}.step p{margin:4px 0}
+code,kbd{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:14px}
+.note{border-left:4px solid var(--taupe);padding:6px 12px;color:var(--muted);margin:10px 0}
+.warn{border-left-color:var(--warn)}
+details{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;margin:8px 0}summary{cursor:pointer;font-weight:600;color:var(--navy)}
+a{color:var(--navy)}
+</style>
+</head>
+<body>
+<main>
+<h1>Démarrer Pseudo-FEC</h1>
+<p class="lead">Outil du cabinet, 100 % local : aucune donnée ne quitte votre ordinateur. Aucune commande à taper, aucun droit administrateur nécessaire.</p>
+
+<div class="step"><div class="n">1</div><div>
+<h3>Installer Python (une seule fois)</h3>
+<p>Téléchargez « Windows installer (64-bit) » de <strong>Python 3.13</strong> sur <a href="https://www.python.org/downloads/windows/">python.org/downloads/windows</a>.</p>
+<p>Dans l'installeur : <strong>cochez « Add python.exe to PATH »</strong>, puis cliquez sur « Install Now ».</p>
+<div class="note">Déjà installé ? Passez à l'étape 2. Version minimale : Python 3.11.</div>
+</div></div>
+
+<div class="step"><div class="n">2</div><div>
+<h3>Récupérer et décompresser le dossier Pseudo-FEC</h3>
+<p>Sur GitHub, bouton vert <code>Code</code> → <code>Download ZIP</code>, puis clic droit → « Extraire tout… ». Choisissez un emplacement simple, par exemple <code>C:\Pseudo-FEC</code>.</p>
+<div class="note warn">Avant d'extraire : clic droit sur le fichier ZIP → <em>Propriétés</em> → cochez <strong>« Débloquer »</strong> → OK. Cela évite l'avertissement de Windows sur le fichier de lancement.</div>
+</div></div>
+
+<div class="step"><div class="n">3</div><div>
+<h3>Double-cliquer sur « Lancer-Pseudo-FEC »</h3>
+<p>Une fenêtre noire s'ouvre. <strong>La première fois</strong>, elle prépare l'application (1 à 3 minutes, connexion Internet nécessaire pour télécharger les composants). Ensuite, le lancement est immédiat et l'outil fonctionne hors ligne.</p>
+<p>Votre navigateur s'ouvre sur l'application. <strong>Gardez la fenêtre noire ouverte</strong> pendant l'utilisation : c'est elle qui fait tourner l'outil. Le bouton « Quitter » de la page l'arrête proprement.</p>
+<div class="note warn">Si Windows affiche « Windows a protégé votre ordinateur » : cliquez sur <em>Informations complémentaires</em> puis <em>Exécuter quand même</em>. Le fichier n'est pas signé numériquement à ce stade du pilote.</div>
+</div></div>
+
+<div class="step"><div class="n">4</div><div>
+<h3>Définir la phrase secrète du cabinet</h3>
+<p>À la première utilisation, saisissez la phrase secrète <strong>deux fois</strong>. Elle chiffre les tables de correspondance (les vrais noms). Elle n'est enregistrée nulle part : <strong>en cas de perte, les tables sont irrécupérables</strong>. Conservez-la dans le coffre du cabinet.</p>
+</div></div>
+
+<div class="step"><div class="n">5</div><div>
+<h3>Essayer sans vos données : bouton « Aide et test »</h3>
+<p>En haut à droite de la page :</p>
+<p>• <strong>Lancer la démo</strong> : crée un dossier fictif avec deux exercices déjà importés.<br>
+• <strong>Télécharger le FEC fictif</strong> : pour tester l'import par glisser-déposer.<br>
+• <strong>Auto-diagnostic</strong> : vérifie que tout fonctionne. Le bouton « Copier le rapport » donne un texte sans aucune donnée de dossier, à m'envoyer en cas de problème.<br>
+• <strong>Ouvrir le dossier des tables / des sorties</strong> dans l'Explorateur.</p>
+</div></div>
+
+<h2>Questions fréquentes</h2>
+<details><summary>« Python n'est pas installé » alors que je l'ai installé</summary>
+<p>Fermez la fenêtre, relancez l'installeur Python en choisissant « Modify », et vérifiez que « Add python.exe to PATH » est coché. Si Windows propose le Microsoft Store au lieu de lancer Python, désactivez les « alias d'exécution d'application » pour <code>python.exe</code> dans Paramètres → Applications.</p></details>
+<details><summary>L'installation des composants échoue</summary>
+<p>Vérifiez la connexion Internet (proxy d'entreprise, antivirus). Sans Internet : demandez le dossier <code>wheels</code> (composants fournis), déposez-le à côté de <code>bootstrap.py</code> et relancez : l'installation se fait alors hors ligne.</p></details>
+<details><summary>Le navigateur ne s'ouvre pas</summary>
+<p>Copiez l'adresse affichée dans la fenêtre noire (elle commence par <code>http://127.0.0.1</code>) dans la barre d'adresse du navigateur.</p></details>
+<details><summary>La page affiche « Session non autorisée »</summary>
+<p>Fermez l'onglet, fermez la fenêtre noire et relancez <code>Lancer-Pseudo-FEC</code> : l'adresse change à chaque lancement.</p></details>
+<details><summary>Où sont mes données ?</summary>
+<p>Tables chiffrées : <code>%LOCALAPPDATA%\PseudoFEC\tables</code>. Fichiers produits : <code>Documents\PseudoFEC\sorties</code>. Le bouton « Aide et test » les ouvre directement. Ne supprimez pas le dossier des tables : il contient la correspondance chiffrée nom réel ↔ pseudonyme.</p></details>
+<details><summary>Mettre à jour l'application</summary>
+<p>Remplacez le contenu du dossier par la nouvelle version (en conservant le dossier <code>.venv</code> s'il existe). Vos tables ne sont pas dans ce dossier : elles ne sont pas touchées.</p></details>
+<details><summary>Désinstaller</summary>
+<p>Supprimez le dossier Pseudo-FEC. Les tables restent dans <code>%LOCALAPPDATA%\PseudoFEC</code> tant que vous ne les supprimez pas vous-même.</p></details>
+
+<p class="lead" style="margin-top:28px">Version pilote — ne l'utilisez pas encore sur des dossiers sensibles sans avoir lu les limites connues dans <code>README.md</code>.</p>
+</main>
+</body>
+</html>

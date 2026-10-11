@@ -53,6 +53,7 @@ function renderSteps() {
   }));
   document.getElementById("who").textContent = S.state && S.state.dossier ? "Dossier " + S.state.dossier : "";
   document.getElementById("btn-lock").hidden = !(S.state && S.state.unlocked);
+  document.getElementById("btn-help").classList.toggle("on", S.view === "aide");
 }
 
 async function refresh() { S.state = await api("GET", "/api/state"); }
@@ -62,6 +63,7 @@ async function render() {
   renderSteps();
   main.replaceChildren();
   try {
+    if (S.view === "aide") return await renderAide();
     if (!S.state.unlocked) return renderLogin();
     if (S.view === "fiche" && S.dossier) return renderFiche();   // y compris un nouveau dossier pas encore créé
     if (S.view === "home" || !S.state.dossier) { S.view = "home"; renderSteps(); return await renderHome(); }
@@ -76,14 +78,16 @@ function renderLogin() {
   const pass = h("input", { type: "password", id: "pp", autocomplete: "off", autofocus: true });
   const conf = h("input", { type: "password", id: "pp2", autocomplete: "off" });
   const box = h("div");
+  const btn = h("button", {}, "Déverrouiller");
   const submit = async () => {
-    box.replaceChildren();
+    box.replaceChildren(); btn.disabled = true; btn.textContent = "Vérification en cours… (quelques secondes)";
     try {
       S.state = await api("POST", "/api/unlock", { passphrase: pass.value, confirm: conf.value });
       pass.value = conf.value = "";
       await go("home");
-    } catch (e) { box.append(msg("err", e.message)); }
+    } catch (e) { box.append(msg("err", e.message)); btn.disabled = false; btn.textContent = "Déverrouiller"; }
   };
+  btn.addEventListener("click", submit);
   [pass, conf].forEach((i) => i.addEventListener("keydown", (ev) => ev.key === "Enter" && submit()));
   main.append(
     h("h1", {}, first ? "Première utilisation : définir la phrase secrète du cabinet" : "Phrase secrète du cabinet"),
@@ -93,7 +97,7 @@ function renderLogin() {
     h("div", { class: "card" },
       h("label", { for: "pp" }, "Phrase secrète"), pass,
       first && [h("label", { for: "pp2" }, "Confirmer la phrase secrète"), conf],
-      box, h("div", { class: "actions" }, h("button", { onclick: submit }, "Déverrouiller"))));
+      box, h("div", { class: "actions" }, btn)));
 }
 
 // ------------------------------------------------------------------ accueil
@@ -434,11 +438,77 @@ async function renderNoms() {
   if (S.det && S.rows) draw(); else await detect();
 }
 
+// ------------------------------------------------------------------ aide et test
+async function download(path, fallbackName) {
+  const r = await fetch(path, { headers: { "X-PF-Token": TOKEN } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Téléchargement impossible.");
+  const cd = r.headers.get("Content-Disposition") || "", m = /filename="([^"]+)"/.exec(cd);
+  const url = URL.createObjectURL(await r.blob());
+  const a = h("a", { href: url, download: m ? m[1] : fallbackName }); document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+async function renderAide() {
+  const box = h("div"), diag = h("div");
+  const DEMOS = [["cabinet", "Style cabinet", "CRLF, 8 bits, dates JJ/MM/AAAA, salariés en 421 : proche de votre FEC de 2022."],
+    ["pennylane", "Style Pennylane", "UTF-8, tiers en auxiliaire, nom incrusté dans CompAuxNum, valeurs vides entre guillemets."],
+    ["standard", "Norme A47 A-1", "Dates AAAAMMJJ, tiers en auxiliaire."],
+    ["compte_individualise", "Tiers en compte général", "Noms dans CompteNum / CompteLib, sans auxiliaire."]];
+  async function demo(style) {
+    box.replaceChildren();
+    if (!S.state.unlocked) { S.view = "home"; await render(); main.prepend(msg("warn", "Saisissez d'abord la phrase secrète, puis relancez la démonstration depuis « Aide et test ».")); return; }
+    box.append(h("p", { class: "muted" }, "Création du dossier de démonstration… (quelques secondes)"));
+    try { await api("POST", "/api/demo/create", { style }); S.dossier = null; S.det = null; await refresh(); S.view = "fec"; await render(); }
+    catch (e) { box.append(msg("err", e.message)); }
+  }
+  async function runDiag() {
+    diag.replaceChildren(h("p", { class: "muted" }, "Auto-diagnostic en cours (quelques secondes)…"));
+    try {
+      const r = await api("GET", "/api/diagnostic");
+      const copy = h("button", { class: "ghost small" }, "Copier le rapport");
+      copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(r.texte); copy.textContent = "Rapport copié ✓"; } catch (_) { copy.textContent = "Copie impossible : sélectionnez le texte"; } });
+      put(diag, msg(r.ok ? "ok" : "err", r.ok ? "Tout fonctionne : l'installation est prête." : "Au moins un contrôle a échoué : voir le détail ci-dessous."),
+        h("table", {}, h("tbody", {}, r.checks.map((c) => h("tr", {}, h("td", {}, h("span", { class: "pill " + (c.ok ? "ok" : "err") }, c.ok ? "OK" : "ÉCHEC")), h("th", {}, c.nom), h("td", {}, c.detail))))),
+        h("div", { class: "actions" }, copy), h("p", { class: "muted" }, "Le rapport ne contient aucune donnée de dossier : vous pouvez le copier et l'envoyer tel quel."));
+    } catch (e) { diag.replaceChildren(msg("err", e.message)); }
+  }
+  async function openFolder(which) {
+    box.replaceChildren();
+    try { const r = await api("POST", "/api/open-folder", { which }); box.append(msg(r.ok ? "ok" : "warn", r.message)); } catch (e) { box.append(msg("err", e.message)); }
+  }
+  main.append(
+    h("h1", {}, "Aide et test"),
+    h("p", { class: "muted" }, "Tout se passe sur cet ordinateur : aucune donnée n'est envoyée ailleurs. Cette page sert à essayer l'outil sans vos données réelles."),
+    box,
+    h("h2", {}, "1 · Essayer avec des données fictives"),
+    h("div", { class: "card" },
+      h("p", {}, "Crée un dossier « DEMO-nnn » avec deux exercices fictifs déjà importés, puis vous emmène à l'étape 3. Vous pouvez enchaîner : détection des noms, regroupements, enregistrement des décisions."),
+      h("div", { class: "list" }, DEMOS.map(([k, t, d]) => h("div", { class: "item" }, h("div", {}, h("strong", {}, t), h("div", { class: "muted" }, d)),
+        h("div", { class: "actions" }, h("button", { class: "small", onclick: () => demo(k) }, "Lancer la démo"),
+          h("button", { class: "ghost small", onclick: () => download("/api/demo/fec?style=" + k + "&year=2024", "DEMO-FEC.txt").catch((e) => box.append(msg("err", e.message))) }, "Télécharger le FEC fictif"))))),
+      h("p", { class: "muted" }, "Le FEC fictif téléchargé sert à tester l'import par « glisser-déposer » dans votre propre dossier de test.")),
+    h("h2", {}, "2 · Vérifier l'installation"),
+    h("div", { class: "card" }, h("p", {}, "Contrôle le chiffrement, l'écriture dans les dossiers, la lecture de FEC et la détection, sur des données fictives."),
+      h("div", { class: "actions" }, h("button", { onclick: runDiag }, "Lancer l'auto-diagnostic")), diag),
+    h("h2", {}, "3 · Retrouver mes fichiers"),
+    h("div", { class: "card" },
+      h("p", {}, h("strong", {}, "Tables chiffrées : "), S.state.tables_root, h("br", {}), h("strong", {}, "Fichiers produits : "), S.state.outputs_root),
+      h("div", { class: "actions" }, h("button", { class: "ghost small", onclick: () => openFolder("tables") }, "Ouvrir le dossier des tables"), h("button", { class: "ghost small", onclick: () => openFolder("outputs") }, "Ouvrir le dossier des sorties")),
+      h("p", { class: "muted" }, "Les tables contiennent les vrais noms (chiffrés) : ne les copiez pas dans le même dossier que les fichiers destinés à Claude.")),
+    h("h2", {}, "4 · Parcours à tester"),
+    h("div", { class: "card" }, h("ol", {},
+      h("li", {}, "Fiche dossier : saisir la société, les dirigeants et les sociétés liées (ou utiliser une démo)."),
+      h("li", {}, "Import du FEC : contrôles d'intégrité, détection du format et des dates."),
+      h("li", {}, "Noms à valider : regroupements proposés, conflits, tiers usuels maintenus, ajout manuel."),
+      h("li", {}, "Fermer puis rouvrir l'application : le dossier et ses décisions doivent être retrouvés (phrase secrète demandée)."))),
+    h("p", { class: "muted" }, "À venir : pseudonymisation du FEC, texte libre, ré-identification des restitutions."));
+}
+
 // ------------------------------------------------------------------ boutons du haut
 document.getElementById("btn-quit").addEventListener("click", async () => {
   try { await api("POST", "/api/quit", {}); } catch (_) {}
   document.body.replaceChildren(h("main", {}, h("h1", {}, "Application arrêtée"), h("p", { class: "muted" }, "Vous pouvez fermer cet onglet.")));
 });
+document.getElementById("btn-help").addEventListener("click", () => { S.prevView = S.view === "aide" ? S.prevView : S.view; go(S.view === "aide" ? (S.prevView || "home") : "aide"); });
 document.getElementById("btn-lock").addEventListener("click", async () => {
   S.state = await api("POST", "/api/lock", {}); S.dossier = null; await go("home");
 });

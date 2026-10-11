@@ -7,13 +7,18 @@ ré-identifie les restitutions. Interface HTML servie sur `127.0.0.1` par l'appl
 Prochains jalons : (c) pseudonymisation du FEC, (d) texte libre,
 (e–g) ré-identification DOCX/XLSX/PPTX, (h) verrouillage et audit, (i) packaging Windows.
 
-## Essayer sur son poste (avant tout déploiement)
+## Lancer et tester sur son poste (sans PowerShell)
 
-Prérequis : Python 3.11 ou plus sur Windows 11 (aucun droit administrateur : cocher « Add to PATH » / installation « pour moi seul »).
+1. Installer **Python 3.13** une fois (« Add python.exe to PATH » coché, sans droit administrateur).
+2. Décompresser le dossier (ZIP débloqué : clic droit → Propriétés → Débloquer).
+3. **Double-cliquer sur `Lancer-Pseudo-FEC.bat`**. Première fois : préparation automatique (1 à 3 min, Internet
+   pour télécharger les composants). Ensuite : lancement immédiat, outil hors ligne.
+4. Le navigateur s'ouvre ; bouton **« Aide et test »** : démo sur données fictives, auto-diagnostic copiable,
+   ouverture des dossiers de tables et de sorties.
 
-1. Double-clic sur `scripts\installer_dev.bat` (une fois ; seule étape qui télécharge des paquets).
-2. Double-clic sur `scripts\lancer.bat` : le navigateur s'ouvre sur l'interface.
-3. Première utilisation : saisir deux fois la phrase secrète du cabinet.
+Guide illustré pas à pas : `DEMARRER.html` (à ouvrir par double-clic).
+Installation hors ligne : déposer un dossier `wheels` de composants à côté de `bootstrap.py`.
+Une page web ne peut pas démarrer un programme (sécurité du navigateur) : c'est le fichier `.bat` qui lance l'outil.
 
 Les tables chiffrées sont dans `%LOCALAPPDATA%\PseudoFEC\tables` (modifiable via `prefs.json`).
 **La phrase secrète n'est écrite nulle part** ; la perdre rend les tables irrécupérables.
