@@ -1,4 +1,2 @@
-pandas>=2.0
-openpyxl>=3.1
-python-docx>=1.1
-pytest>=7.0
+# Dépendances d'exécution épinglées (les empreintes SHA-256 seront ajoutées au jalon i).
+cryptography==50.0.1

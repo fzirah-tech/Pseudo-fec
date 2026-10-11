@@ -18,3 +18,18 @@ dist/
 
 # Sorties de test
 /tmp_out/
+
+# --- DONNÉES RÉELLES : ne jamais versionner ---
+*FEC*.txt
+*FEC*.csv
+!tests/synth*.py
+*.enc
+keyring.json
+cabinet.canary
+audit.log
+table.lock
+sorties/
+PSEUDO/
+REEL/
+*.part
+.venv/

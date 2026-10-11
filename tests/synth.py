@@ -1,0 +1,140 @@
+"""Générateur de FEC SYNTHÉTIQUES (aucune donnée réelle : toutes les entités sont fictives).
+
+Styles :
+- "standard"  : norme A47 A-1 (dates AAAAMMJJ, tiers en comptes auxiliaires) ;
+- "cabinet"   : reproduit les particularités observées sur un export réel
+                (CRLF, 8 bits, en-têtes « ␣Debit␣ », EcritureDate JJ/MM/AAAA,
+                montants « 1 234,56 », « - » pour zéro, salariés en 421 individualisés) ;
+- "pennylane" : HYPOTHÈSE de travail (non vérifiée sur export réel) : tiers dans
+                CompteLib / CompteNum (ex. 401DUPBAT), sans compte auxiliaire.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass, field
+from decimal import Decimal
+
+from pseudo_fec.fec_io import CANON
+
+SIREN = "732829320"  # Luhn valide, fictif
+
+ENTITE = "ATELIERS DU PORT SAS"
+SIGLE = "ADP"
+DIRIGEANT = "Claire BERNARD-MOREAU"
+ASSOCIE = "Paul Henri DESCHAMPS"
+MERE = "HOLDING DESCHAMPS SAS"
+SCI = "SCI LES TILLEULS"
+FOURNISSEURS = [("DUPONT BATIMENT SARL", "DUPBAT"), ("MARTINEZ ET FILS", "MARTIN"),
+                ("MARTIN", "MARTI2"), ("Boulangerie ROSE", "ROSE"),
+                ("ÉTABLISSEMENTS LEFÈVRE-DUBOIS", "LEFDUB"), ("ORANGE", "ORANGE"), ("URSSAF", "URSSAF")]
+CLIENTS = [("Société DURAND & ASSOCIÉS", "DURAND"), ("Mme Zoé N'GUYEN", "NGUYEN"), ("ŒUVRES DU SUD SARL", "OEUVRE")]
+SALARIES = ["Karim BENALI", "Sophie MARTIN", "Jean-Pierre LEFEBVRE"]
+IBAN = "FR7630006000011234567890189"
+
+REAL_NAMES = [ENTITE, DIRIGEANT, ASSOCIE, MERE, SCI, *[f[0] for f in FOURNISSEURS if f[0] not in ("ORANGE", "URSSAF")],
+              *[c[0] for c in CLIENTS], *SALARIES]
+
+
+@dataclass
+class Synth:
+    data: bytes
+    filename: str
+    style: str
+    year: int
+    n_lines: int
+    total: Decimal
+    names: list[str] = field(default_factory=lambda: list(REAL_NAMES))
+
+
+def _amt(v: Decimal, style: str, thousands: bool) -> str:
+    if style == "cabinet":
+        if v == 0:
+            return "-"
+        s = f"{v:,.2f}".replace(",", " ").replace(".", ",")
+        return s
+    return f"{v:.2f}".replace(".", ",")
+
+
+def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024, seed: int = 7,
+             bom: bool = False, sep: str = "\t", n_entries: int = 60) -> Synth:
+    rnd = random.Random(seed + year)
+    cabinet = style == "cabinet"
+    penny = style == "pennylane"
+    lines: list[list[str]] = []
+    num = [0]
+
+    def date(m: int, d: int) -> tuple[str, str]:
+        ymd = f"{year}{m:02d}{d:02d}"
+        return (f"{d:02d}/{m:02d}/{year}" if cabinet else ymd), ymd
+
+    def add(journal: str, jlib: str, m: int, d: int, cpt: str, cptlib: str, aux: str, auxlib: str,
+            piece: str, lib: str, debit: Decimal, credit: Decimal, let: str = "") -> None:
+        ed, pd = date(m, d)
+        lines.append([journal, jlib, str(num[0]), ed, cpt, cptlib, aux, auxlib, piece, pd, lib,
+                      _amt(debit, style, True), _amt(credit, style, True), let, "", pd, "", ""])
+
+    def tiers(prefix: str, name: str, code: str) -> tuple[str, str, str, str]:
+        if penny:
+            return f"{prefix}{code}", name, "", ""
+        if cabinet:
+            return f"{prefix}000000", "Fournisseurs" if prefix == "401" else "Clients", f"{rnd.randint(1, 99)}{code}", name
+        return f"{prefix}000", "Fournisseurs" if prefix == "401" else "Clients", ("F" if prefix == "401" else "C") + code, name
+
+    for i in range(n_entries):
+        num[0] += 1
+        m, d = 1 + i % 12, 1 + (i * 3) % 27
+        kind = i % 6
+        ht = Decimal(rnd.randint(100, 9000)) + Decimal(rnd.randint(0, 99)) / 100
+        tva = (ht * Decimal("0.2")).quantize(Decimal("0.01"))
+        ttc = ht + tva
+        if kind in (0, 1):  # achat
+            nm, code = FOURNISSEURS[i % len(FOURNISSEURS)]
+            c, cl, a, al = tiers("401", nm, code)
+            lib = f"FACT 2024-{i:03d} {nm}" if i % 2 else f"{nm} fact {i}"
+            add("ACH", "Achats", m, d, "607000", "Achats de marchandises", "", "", f"FA{i:04d}", lib, ht, Decimal(0))
+            add("ACH", "Achats", m, d, "445660", "TVA déductible", "", "", f"FA{i:04d}", lib, tva, Decimal(0))
+            add("ACH", "Achats", m, d, c, cl, a, al, f"FA{i:04d}", lib, Decimal(0), ttc, "AA")
+        elif kind == 2:  # vente
+            nm, code = CLIENTS[i % len(CLIENTS)]
+            c, cl, a, al = tiers("411", nm, code)
+            lib = f"Facture client {nm}"
+            add("VEN", "Ventes", m, d, c, cl, a, al, f"FV{i:04d}", lib, ttc, Decimal(0))
+            add("VEN", "Ventes", m, d, "706000", "Prestations de services", "", "", f"FV{i:04d}", lib, Decimal(0), ht)
+            add("VEN", "Ventes", m, d, "445710", "TVA collectée", "", "", f"FV{i:04d}", lib, Decimal(0), tva)
+        elif kind == 3:  # paie
+            sal = SALARIES[i % len(SALARIES)]
+            net = ht
+            if cabinet or penny:
+                cpt, cl = (f"421{SALARIES.index(sal) + 1:06d}" if cabinet else f"421{sal.split()[-1][:5].upper()}"), sal
+            else:
+                cpt, cl = "421000", "Personnel - rémunérations dues"
+            lib = f"SALAIRE {m:02d}/{year} {sal}" if i % 2 else f"Paie {sal}"
+            add("OD", "Opérations diverses", m, 28, "641000", "Rémunérations du personnel", "", "", f"PAIE{m:02d}", lib, net, Decimal(0))
+            add("OD", "Opérations diverses", m, 28, cpt, cl, "", "", f"PAIE{m:02d}", lib, Decimal(0), net)
+        elif kind == 4:  # opérations avec groupe / associé
+            lib = rnd.choice([f"REFACT {ENTITE}", f"PRET {SCI}", f"CCA {ASSOCIE}", f"Intérêts {DIRIGEANT}",
+                              f"Avance {MERE}", f"Remb. ADP {SIGLE}"])
+            add("OD", "Opérations diverses", m, d, "455000" if not (cabinet or penny) else "455000",
+                f"Associé - {ASSOCIE}", "", "", f"OD{i:04d}", lib, ht, Decimal(0))
+            add("OD", "Opérations diverses", m, d, "451000", f"Groupe - {MERE}", "", "", f"OD{i:04d}", lib, Decimal(0), ht)
+            if i % 12 == 4:
+                add("OD", "Opérations diverses", m, d, "261000", f"Titres {SCI}", "", "", f"OD{i:04d}", lib, ht, Decimal(0))
+                add("OD", "Opérations diverses", m, d, "512000", "Banque", "", "", f"OD{i:04d}", lib, Decimal(0), ht)
+        else:  # banque avec IBAN
+            nm, code = FOURNISSEURS[(i + 1) % len(FOURNISSEURS)]
+            c, cl, a, al = tiers("401", nm, code)
+            lib = f"VIR SEPA {nm} IBAN {IBAN} REF {i:05d}"
+            add("BQ", "Banque", m, d, c, cl, a, al, f"BQ{i:04d}", lib, ttc, Decimal(0), "AA")
+            add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{i:04d}", lib, Decimal(0), ttc)
+
+    header = list(CANON)
+    if cabinet:
+        header[header.index("Debit")], header[header.index("Credit")] = " Debit ", " Credit "
+    nl = "\r\n" if cabinet else "\n"
+    text = nl.join(sep.join(r) for r in [header, *lines]) + nl
+    data = text.encode(encoding)
+    if bom:
+        data = b"\xef\xbb\xbf" + data
+    total = sum((Decimal(r[11].replace(" ", "").replace("-", "0").replace(",", ".")) for r in lines), Decimal(0))
+    return Synth(data, f"{SIREN}FEC{year}1231.txt", style, year, len(lines), total)
