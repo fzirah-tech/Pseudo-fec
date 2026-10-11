@@ -37,6 +37,19 @@ def test_parcours_navigateur(cfg, tmp_path):
             pg.wait_for_selector("h1:has-text('Import et contrôle')")
             pg.set_input_files("input[type=file]", [str(f)])
             pg.wait_for_selector("text=Contrôles passés", timeout=20000)
+            # jalon (b) : détection des noms, fusion proposée, enregistrement
+            pg.click("text=Passer à la détection des noms")
+            pg.wait_for_selector(".nrow", timeout=20000)
+            assert pg.locator(".nrow").count() >= 8
+            assert "à pseudonymiser" in pg.locator("#stat").inner_text()
+            assert "false" not in pg.locator("main").inner_text()
+            pg.click("text=Appliquer tous les regroupements")
+            pg.fill("input[type=search]", "benali")
+            pw.expect(pg.locator(".nrow")).to_have_count(1)   # « Karim BENALI » et « BENALI Karim » fusionnés
+            pg.fill("input[type=search]", "")
+            pw.expect(pg.locator(".nrow")).not_to_have_count(1)
+            pg.click("text=Enregistrer les décisions")
+            pg.wait_for_selector("text=enregistrée(s) dans la table chiffrée", timeout=20000)
             b.close()
     finally:
         srv.shutdown()

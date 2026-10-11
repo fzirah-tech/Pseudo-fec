@@ -158,3 +158,72 @@ def apply_fiche(payload: dict[str, Any], raw: dict[str, Any]) -> list[str]:
     payload["fiche"] = fiche
     sync_entities(payload)
     return warns
+
+
+# --- validation des noms candidats (jalon b) ---
+
+def _entity_by_uid(payload: dict[str, Any], uid: str | None) -> dict[str, Any] | None:
+    return next((e for e in payload["entities"] if uid and e["uid"] == uid), None)
+
+
+def apply_validation(payload: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Enregistre les décisions de l'utilisateur sur les noms candidats.
+
+    Chaque ligne : {uid?, nom, cat, checked, variantes[], source, touched?, absorbed_uids[]?}.
+    - un pseudonyme n'est attribué qu'aux entités cochées, puis conservé à vie ;
+    - la catégorie ne change plus une fois le pseudonyme attribué (il en porte le préfixe) ;
+    - une fusion retire l'entité absorbée du matching mais garde son pseudonyme (anciennes sorties ré-identifiables).
+    """
+    from .detection import CATS
+    from .textmatch import NameMatcher
+
+    warnings: list[str] = []
+    created = updated = 0
+    by_fold = {fold(e["nom"]): e for e in payload["entities"] if not e.get("retired")}
+    for row in rows:
+        nom = re.sub(r"\s+", " ", str(row.get("nom", ""))).strip()
+        cat = row.get("cat")
+        if not nom or cat not in CATS or cat == "SOC" and not _entity_by_uid(payload, row.get("uid")):
+            continue
+        checked = bool(row.get("checked"))
+        e = _entity_by_uid(payload, row.get("uid")) or by_fold.get(fold(nom))
+        if e is None:
+            if not checked and not row.get("touched") and row.get("source") not in ("aux", "compte", "manuel"):
+                continue            # proposition heuristique ignorée : on ne la mémorise pas
+            e = {"uid": secrets.token_hex(4), "pseudo": None, "cat": cat, "source": row.get("source", "detection"),
+                 "nom": nom, "variantes": [], "ids": [], "a_pseudonymiser": checked, "retired": False}
+            payload["entities"].append(e)
+            created += 1
+        else:
+            updated += 1
+            if e["pseudo"] and cat != e["cat"]:
+                warnings.append("Catégorie inchangée pour un tiers déjà pseudonymisé (le pseudonyme en porte le préfixe).")
+            elif not e["pseudo"]:
+                e["cat"] = cat
+        e["nom"] = nom if e["source"] != "fiche" else e["nom"]
+        kept = _clean_list(row.get("variantes", []))
+        if e["source"] == "fiche":
+            kept = _clean_list([*e.get("variantes", []), *kept])
+        e["variantes"] = [v for v in kept if fold(v) != fold(e["nom"])]
+        e["a_pseudonymiser"] = checked
+        if checked and not e["pseudo"]:
+            e["pseudo"] = _alloc(payload, e["cat"])
+        by_fold[fold(e["nom"])] = e
+        for old in row.get("absorbed_uids", []):
+            o = _entity_by_uid(payload, old)
+            if o and o is not e:
+                o["retired"], o["alias_of"], o["a_pseudonymiser"] = True, e["uid"], False
+
+    conflicts = entity_conflicts(payload)
+    return {"created": created, "updated": updated, "warnings": warnings, "conflicts": conflicts,
+            "a_pseudonymiser": sum(1 for e in payload["entities"] if e.get("a_pseudonymiser") and not e.get("retired")),
+            "bloquant": bool(conflicts)}
+
+
+def entity_conflicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Un même texte rattaché à deux entités : la pseudonymisation serait ambiguë (bloquant)."""
+    from .textmatch import NameMatcher
+    active = [e for e in payload["entities"] if e.get("a_pseudonymiser") and not e.get("retired")]
+    m = NameMatcher((v, e["uid"]) for e in active for v in {e["nom"], *e.get("variantes", []), *e.get("ids", [])})
+    names = {e["uid"]: e["nom"] for e in active}
+    return [{"texte": " ".join(t), "entites": [names[u] for u in uids]} for t, uids in m.conflicts.items()]

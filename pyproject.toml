@@ -7,7 +7,7 @@ name = "pseudo-fec"
 dynamic = ["version"]
 description = "Pseudonymisation et ré-identification locales de FEC (hors ligne)."
 requires-python = ">=3.11"
-dependencies = ["cryptography==50.0.1"]
+dependencies = ["cryptography==50.0.1", "rapidfuzz==3.14.6"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pseudo_fec.__version__" }

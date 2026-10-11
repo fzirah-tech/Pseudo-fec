@@ -3,8 +3,8 @@
 Outil **local et hors ligne** de cabinet : pseudonymise les FEC avant analyse dans Claude, puis
 ré-identifie les restitutions. Interface HTML servie sur `127.0.0.1` par l'application elle-même.
 
-**État : jalon (a)** — socle, fiche dossier, import et contrôle du FEC.
-Prochains jalons : (b) détection et validation des noms, (c) pseudonymisation du FEC, (d) texte libre,
+**État : jalon (b)** — socle, fiche dossier, import et contrôle du FEC, détection et validation des noms.
+Prochains jalons : (c) pseudonymisation du FEC, (d) texte libre,
 (e–g) ré-identification DOCX/XLSX/PPTX, (h) verrouillage et audit, (i) packaging Windows.
 
 ## Essayer sur son poste (avant tout déploiement)
@@ -36,7 +36,24 @@ Les tests n'utilisent que des données synthétiques (`tests/synth.py`) ; ne jam
   possibles (secours, changement sans rechiffrement) ; une table ne peut pas être transposée dans un autre dossier.
 - Messages d'erreur sans aucune donnée issue des fichiers.
 
-## Limites connues (jalon a)
+## Détection des noms (jalon b)
+
+Les noms candidats viennent, par ordre de fiabilité : de la fiche dossier et de la table, de `CompAuxLib`,
+du `CompteLib` des comptes de tiers individualisés (421, 455, 164…), puis des libellés d'écritures
+(tiers connus retrouvés avec leurs variantes ; noms propres inconnus proposés par heuristiques).
+**Rien n'est appliqué sans validation** : fusions de variantes seulement proposées, propositions peu fiables
+non cochées, tiers usuels (liste blanche) maintenus sauf si vous les cochez.
+Un même texte rattaché à deux entités (« MARTIN ») est un **conflit bloquant** à résoudre.
+Les motifs sensibles (IBAN, SIRET, e-mail, téléphone…) sont signalés ; un SIREN n'est retenu que s'il est celui
+d'une entité ou précédé du mot « SIREN » (la clé de Luhn seule laisse passer 1 nombre sur 10).
+
+## Limites connues (jalons a et b)
+
+- La détection **n'offre aucune garantie d'exhaustivité** : un nom écrit sous une forme non proposée (prénom seul,
+  faute de frappe, abréviation) reste en clair ; la seconde passe de contrôle sur la sortie (jalon c) le signalera.
+- Les propositions issues des libellés sont nombreuses sur les FEC dont le journal de banque contient des noms de
+  contreparties : elles demandent une revue humaine (filtres et sélections en masse fournis).
+- Fusion « Œ » / « OE » gérée ; autres ligatures rares non testées.
 
 - Pas encore de verrouillage multi-utilisateurs ni de journal d'audit (jalon h) : **un seul utilisateur à la fois** en pilote.
 - Détection de l'encodage 8 bits (cp1252 / ISO-8859-15) heuristique ; la réécriture à l'identique est vérifiée à l'import.

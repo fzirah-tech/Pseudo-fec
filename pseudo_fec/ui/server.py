@@ -34,6 +34,9 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
+    def handle_error(self, request, client_address) -> None:  # noqa: D401
+        """Aucune trace affichée : une exception pourrait citer des données du fichier."""
+
 
 class Handler(BaseHTTPRequestHandler):
     server: "PseudoFecServer"  # type: ignore[assignment]

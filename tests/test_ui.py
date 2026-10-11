@@ -188,3 +188,52 @@ def test_aucun_module_reseau_dans_le_code():
         src = f.read_text(encoding="utf-8")
         for mot in interdits:
             assert mot not in src, f"{mot} dans {f.name}"
+
+
+# ---------------------------------------------------------------- jalon (b) : détection et validation
+
+def test_detection_et_validation_via_api(app):
+    parcours(app)
+    st, det = app.req("POST", "/api/detect", {})
+    assert st == 200 and det["stats"]["lignes"] > 0
+    noms = {c["nom"]: c for c in det["candidats"]}
+    assert noms["DUPONT BATIMENT SARL"]["checked"] and noms["ORANGE"]["statut"] == "liste_blanche"
+    rows = [{"nom": c["nom"], "cat": c["cat"], "checked": c["checked"], "uid": c["uid"], "source": c["source"],
+             "variantes": [v["texte"] for v in c["variantes"] if v["coche"]]} for c in det["candidats"]]
+    st, out = app.req("POST", "/api/entities/save", {"rows": rows})
+    assert st == 200 and out["created"] > 0 and not out["bloquant"]
+    st, d = app.req("GET", "/api/dossier")
+    pseudos = {e["nom"]: e["pseudo"] for e in d["entities"]}
+    assert pseudos["ATELIERS DU PORT SAS"] == "SOC-0001" and pseudos["DUPONT BATIMENT SARL"].startswith("FRN-")
+    # réouverture : les entités validées sont reconnues, aucun pseudonyme n'est réattribué
+    app.req("POST", "/api/dossier/open", {"code": "D-001"})
+    app.req("POST", "/api/fec/upload", raw=make_fec("standard").data, headers={"X-Filename": "x.txt"})
+    det2 = app.req("POST", "/api/detect", {})[1]
+    again = {c["nom"]: c for c in det2["candidats"]}
+    assert again["DUPONT BATIMENT SARL"]["statut"] == "connu" and again["DUPONT BATIMENT SARL"]["pseudo"] == pseudos["DUPONT BATIMENT SARL"]
+
+
+def test_detection_exige_un_fec_sans_erreur(app):
+    app.req("POST", "/api/unlock", {"passphrase": TEST_PASS, "confirm": TEST_PASS})
+    app.req("POST", "/api/dossier/create", {"code": "D-001", "fiche": FICHE})
+    assert app.req("POST", "/api/detect", {})[0] == 400
+    s = make_fec()
+    app.req("POST", "/api/fec/upload", raw=s.data, headers={"X-Filename": "123456782FEC20241231.txt"})  # SIREN différent -> bloquant
+    st, body = app.req("POST", "/api/detect", {})
+    assert st == 400 and "bloquant" in body["error"].lower() or "erreurs" in body["error"].lower()
+
+
+def test_liste_blanche_api_ecrit_le_cabinet_et_la_trace(app, cfg):
+    parcours(app)
+    st, out = app.req("POST", "/api/whitelist/add", {"nom": "Banque Exemple"})
+    assert st == 200 and "BANQUE EXEMPLE" in out["whitelist"]
+    assert "BANQUE EXEMPLE" in json.loads(cfg.cabinet_file.read_text())["whitelist"]
+    assert app.req("POST", "/api/whitelist/add", {"nom": "banque exemple"})[0] == 400
+
+
+def test_detection_sans_nom_dans_les_logs(app, capfd):
+    parcours(app)
+    app.req("POST", "/api/detect", {})
+    out, err = capfd.readouterr()
+    for n in REAL_NAMES:
+        assert n not in out and n not in err

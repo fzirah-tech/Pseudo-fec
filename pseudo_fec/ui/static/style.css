@@ -38,3 +38,20 @@ table{border-collapse:collapse;width:100%;font-size:14px} td,th{text-align:left;
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 .pill{display:inline-block;padding:1px 9px;border-radius:10px;font-size:12px;border:1px solid var(--line)}
 .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.err{color:var(--err);border-color:var(--err)} .pill.warn{color:var(--warn);border-color:var(--warn)}
+
+.nrow{display:grid;grid-template-columns:90px 1fr 230px;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);margin:8px 0}
+.nrow.on{border-left:4px solid var(--navy)}
+.ncheck{display:grid;grid-template-columns:auto 1fr;gap:4px 6px;align-items:center;font-size:12px;align-content:start}
+.ncheck input{width:auto}
+.nname{font-weight:600}
+.nbadges{display:flex;gap:6px;flex-wrap:wrap;margin:3px 0}
+.nside{display:grid;gap:4px;align-content:start;font-size:13px}
+.ndetail{padding-top:6px;display:grid;gap:8px;font-size:13px}
+.ex{font-family:Consolas,monospace;font-size:12px;background:var(--bg);padding:2px 6px;border-radius:4px;margin:2px 0;overflow-wrap:anywhere}
+label.var{display:block;font-weight:400;margin:2px 0}
+label.var input,label.flt input[type=checkbox]{width:auto}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.filters input,.filters select{width:auto;min-width:160px}
+label.flt{display:flex;align-items:center;gap:6px;font-weight:400;margin:0}
+details summary{cursor:pointer;color:var(--navy);font-size:13px}
+@media (max-width:760px){.nrow{grid-template-columns:1fr}}

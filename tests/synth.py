@@ -113,7 +113,7 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
             add("VEN", "Ventes", m, d, "706000", "Prestations de services", "", "", f"FV{i:04d}", lib, Decimal(0), ht)
             add("VEN", "Ventes", m, d, "445710", "TVA collectée", "", "", f"FV{i:04d}", lib, Decimal(0), tva)
         elif kind == 3:  # paie
-            sal = SALARIES[i % len(SALARIES)]
+            sal = SALARIES[(i // 6) % len(SALARIES)]
             net = ht
             if cabinet or penny:
                 cpt, cl = (f"421{SALARIES.index(sal) + 1:06d}" if cabinet else f"421{sal.split()[-1][:5].upper()}"), sal
@@ -131,6 +131,14 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
             if i % 12 == 4:
                 add("OD", "Opérations diverses", m, d, "261000", f"Titres {SCI}", "", "", f"OD{i:04d}", lib, ht, Decimal(0))
                 add("OD", "Opérations diverses", m, d, "512000", "Banque", "", "", f"OD{i:04d}", lib, Decimal(0), ht)
+        elif i % 12 == 11:  # paiement de salaire par virement (NOM Prénom)
+            sal = SALARIES[(i // 12) % len(SALARIES)]
+            first, last = sal.split()[0], sal.split()[-1]
+            cpt, cl = ((f"421{SALARIES.index(sal) + 1:06d}", sal) if cabinet else
+                       (f"421{last[:5].upper()}", sal) if penny else ("421000", "Personnel - rémunérations dues"))
+            lib = f"VIR SALAIRE {last} {first}"
+            add("BQ", "Banque", m, d, cpt, cl, "", "", f"BQ{i:04d}", lib, ht, Decimal(0))
+            add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{i:04d}", lib, Decimal(0), ht)
         else:  # banque avec IBAN
             nm, code = FOURNISSEURS[(i + 1) % len(FOURNISSEURS)]
             c, cl, a, al = tiers("401", nm, code)
@@ -145,7 +153,7 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
                 r[5] += " 20%"
     if pl:
         for r in lines:
-            if r[0] == "OD" and int(r[2]) % 2 == 0:
+            if r[0] == "OD" and int(r[2]) % 2 == 1 and r[4][:3] in ("455", "451", "261"):
                 r[10] = '""'
     header = list(CANON)
     if cabinet:

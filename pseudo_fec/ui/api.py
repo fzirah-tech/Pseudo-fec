@@ -9,7 +9,9 @@ from typing import Any
 
 from .. import __version__, mapping
 from ..config import Config
-from ..dossier import LIENS, ROLES, apply_fiche, new_payload
+from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload
+from ..detection import CATS, detect
+from ..generic_list import Whitelist, add_entry
 from ..errors import DossierError, PseudoFecError, TableError
 from ..fec_io import analyse, parse_fec, FecFile
 
@@ -23,12 +25,14 @@ class AppState:
         self.passphrase: str | None = None
         self.store: mapping.TableStore | None = None
         self.fecs: dict[str, tuple[FecFile, dict[str, Any]]] = {}
+        self.detection: dict[str, Any] | None = None
 
     def close(self) -> None:
         with self.lock:
             self.passphrase = None
             self.store = None
             self.fecs.clear()
+            self.detection = None
 
     # ------------------------------------------------------------ routage
     def handle(self, method: str, path: str, body: bytes, headers: Any) -> dict[str, Any]:
@@ -47,6 +51,9 @@ class AppState:
                 ("POST", "/api/fec/upload"): lambda: self.upload_fec(body, headers),
                 ("GET", "/api/fec/list"): self.list_fecs,
                 ("POST", "/api/fec/remove"): lambda: self.remove_fec(data),
+                ("POST", "/api/detect"): self.run_detection,
+                ("POST", "/api/entities/save"): lambda: self.save_entities(data),
+                ("POST", "/api/whitelist/add"): lambda: self.whitelist_add(data),
                 ("POST", "/api/quit"): lambda: {"_quit": True},
             }
             fn = routes.get((method, path))
@@ -64,7 +71,7 @@ class AppState:
             "dossier": self.store.code if self.store else None,
             "tables_root": str(root), "outputs_root": str(self.cfg.outputs_root),
             "max_fec_mb": self.cfg.get("max_fec_mb"),
-            "liens": LIENS, "roles": ROLES,
+            "liens": LIENS, "roles": ROLES, "categories": CATS, "n_fec": len(self.fecs),
         }
 
     def _need_pass(self) -> str:
@@ -97,6 +104,7 @@ class AppState:
         payload = new_payload(code)
         warns = apply_fiche(payload, d.get("fiche", {}))
         self.fecs.clear()
+        self.detection = None
         self.store = mapping.TableStore.create(self.cfg.tables_root, code, phrase, payload)
         self.cfg.set_pref("last_dossier", code)
         return {**self.get_dossier(), "warnings": warns}
@@ -105,6 +113,7 @@ class AppState:
         phrase = self._need_pass()
         code = str(d.get("code", "")).strip()
         self.fecs.clear()
+        self.detection = None
         self.store = mapping.TableStore.open(self.cfg.tables_root, code, phrase)
         self.cfg.set_pref("last_dossier", code)
         return self.get_dossier()
@@ -134,6 +143,7 @@ class AppState:
         fec = parse_fec(body, name)
         rep = analyse(fec, self.cfg.priority_prefixes, s.payload["fiche"]["societe"]["siren"])
         self.fecs[name] = (fec, rep)
+        self.detection = None
         return rep
 
     def list_fecs(self) -> dict[str, Any]:
@@ -141,4 +151,30 @@ class AppState:
 
     def remove_fec(self, d: dict[str, Any]) -> dict[str, Any]:
         self.fecs.pop(str(d.get("filename", "")), None)
+        self.detection = None
         return self.list_fecs()
+
+    # ------------------------------------------------------------ noms candidats
+    def run_detection(self) -> dict[str, Any]:
+        s = self._store()
+        if not self.fecs:
+            raise PseudoFecError("Importez d'abord au moins un FEC.")
+        if any(rep["bloquant"] for _, rep in self.fecs.values()):
+            raise PseudoFecError("Un FEC présente des erreurs bloquantes : corrigez-les avant la détection.")
+        res = detect([f for f, _ in self.fecs.values()], s.payload, self.cfg.priority_prefixes,
+                     Whitelist(self.cfg.cabinet.get("whitelist", [])))
+        self.detection = res.as_dict()
+        return {**self.detection, "conflits_table": entity_conflicts(s.payload)}
+
+    def save_entities(self, d: dict[str, Any]) -> dict[str, Any]:
+        s = self._store()
+        out = apply_validation(s.payload, d.get("rows", []))
+        s.save(int(self.cfg.get("versions_keep") or 50))
+        return out
+
+    def whitelist_add(self, d: dict[str, Any]) -> dict[str, Any]:
+        s = self._store()
+        trace = add_entry(self.cfg, str(d.get("nom", "")), s.code)
+        s.payload.setdefault("whitelist_log", []).append(trace)
+        s.save(int(self.cfg.get("versions_keep") or 50))
+        return {"ok": True, "whitelist": self.cfg.cabinet["whitelist"]}

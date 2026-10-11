@@ -25,6 +25,7 @@ async function api(method, path, body, extraHeaders) {
   return data;
 }
 
+const put = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
 const msg = (cls, text) => h("div", { class: "msg " + cls, role: "alert" }, text);
 const fmtN = (s) => Number(s).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const CLASSES = { tiers_commerciaux: "Tiers commerciaux (40x, 41x)", personnel: "Personnel (42x)",
@@ -38,7 +39,7 @@ const STEPS = [
   ["noms", "4 · Noms à valider"], ["pseudo", "5 · Pseudonymisation"],
   ["texte", "6 · Texte libre"], ["reid", "7 · Ré-identification"],
 ];
-const AVAILABLE = new Set(["home", "fiche", "fec"]);
+const AVAILABLE = new Set(["home", "fiche", "fec", "noms"]);
 
 function renderSteps() {
   const nav = document.getElementById("steps");
@@ -65,6 +66,7 @@ async function render() {
     if (S.view === "fiche" && S.dossier) return renderFiche();   // y compris un nouveau dossier pas encore créé
     if (S.view === "home" || !S.state.dossier) { S.view = "home"; renderSteps(); return await renderHome(); }
     if (S.view === "fec") return await renderFec();
+    if (S.view === "noms") return await renderNoms();
   } catch (e) { main.append(msg("err", e.message)); }
 }
 
@@ -217,7 +219,11 @@ async function renderFec() {
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => send([...e.dataTransfer.files]));
 
-  function draw() { list.replaceChildren(...S.fecs.map(card)); }
+  const next = h("button", { onclick: () => go("noms") }, "Passer à la détection des noms");
+  function draw() {
+    list.replaceChildren(...S.fecs.map(card));
+    next.disabled = !S.fecs.length || S.fecs.some((r) => r.bloquant);
+  }
   function card(r) {
     const pill = r.bloquant ? h("span", { class: "pill err" }, "À corriger") : h("span", { class: "pill ok" }, "Contrôles passés");
     const lvl = { erreur: "err", avertissement: "warn", info: "ok" };
@@ -245,7 +251,187 @@ async function renderFec() {
     h("h1", {}, "Import et contrôle du FEC"),
     h("p", { class: "muted" }, "Plusieurs exercices d'un même dossier peuvent être importés : ils partageront la même table de pseudonymes."),
     drop, input, box, list,
-    h("p", { class: "msg warn" }, "Étapes suivantes (détection des noms, pseudonymisation, ré-identification) : prochains jalons."));
+    h("div", { class: "actions" }, next),
+    h("p", { class: "msg warn" }, "Étapes suivantes (pseudonymisation du FEC, texte libre, ré-identification) : prochains jalons."));
+}
+
+// ------------------------------------------------------------------ noms à valider
+const CAT_ORDER = ["CLI", "FRN", "SAL", "ASS", "GRP", "TIE", "SOC"];
+const SOURCES = { aux: "compte auxiliaire", compte: "libellé de compte", fiche: "fiche dossier", table: "table du dossier",
+  libelle: "libellé d'écriture", manuel: "ajout manuel" };
+
+function newRow(c) {
+  return { key: c.key, uid: c.uid, nom: c.nom, cat: c.cat, checked: c.checked, defaultChecked: c.checked, source: c.source,
+    confiance: c.confiance, statut: c.statut, liste_blanche: c.liste_blanche, pseudo: c.pseudo,
+    variantes: c.variantes.map((v) => ({ ...v })), champs: c.champs, comptes: c.comptes, nb_comptes: c.nb_comptes,
+    exemples: c.exemples, occurrences: c.occurrences, notes: c.notes, merge_with: c.merge_with,
+    proposees: (c.variantes_proposees || []).map((v) => ({ ...v, coche: v.coche })),
+    absorbed_uids: [], absorbed_keys: [], sel: false, touched: false, open: false };
+}
+function addVariant(t, v) {
+  if (!v.texte || v.texte.toLowerCase() === t.nom.toLowerCase()) return;
+  const ex = t.variantes.find((x) => x.texte.toLowerCase() === v.texte.toLowerCase());
+  if (ex) ex.n += v.n; else t.variantes.push({ ...v });
+}
+function mergeRows(rows) {
+  rows.sort((a, b) => (b.uid ? 1 : 0) - (a.uid ? 1 : 0) || ({ aux: 0, compte: 1 }[a.source] ?? 2) - ({ aux: 0, compte: 1 }[b.source] ?? 2) || b.occurrences - a.occurrences);
+  const t = rows[0];
+  for (const o of rows.slice(1)) {
+    o.variantes.forEach((v) => addVariant(t, v));
+    addVariant(t, { texte: o.nom, n: o.occurrences, origine: "fusion", risque: false, coche: true });
+    o.proposees.forEach((v) => { if (!t.proposees.find((x) => x.texte === v.texte)) t.proposees.push(v); });
+    t.occurrences += o.occurrences; t.exemples = [...t.exemples, ...o.exemples].slice(0, 3);
+    t.checked = t.checked || o.checked; t.touched = true;
+    if (o.uid) t.absorbed_uids.push(o.uid, ...o.absorbed_uids);
+    t.absorbed_keys.push(o.key, ...o.absorbed_keys);
+    t.notes = [...new Set([...t.notes, ...o.notes])];
+  }
+  S.rows = S.rows.filter((r) => !rows.slice(1).includes(r)); t.sel = false;
+}
+function mergeGroups() {  // composantes connexes du graphe des fusions proposées
+  const byKey = new Map(); S.rows.forEach((r) => { byKey.set(r.key, r); r.absorbed_keys.forEach((k) => byKey.set(k, r)); });
+  const seen = new Set(), groups = [];
+  for (const r of S.rows) {
+    if (seen.has(r)) continue;
+    const comp = [], stack = [r];
+    while (stack.length) {
+      const x = stack.pop(); if (seen.has(x)) continue; seen.add(x); comp.push(x);
+      [x.key, ...x.absorbed_keys].forEach(() => {});
+      for (const k of x.merge_with) { const y = byKey.get(k); if (y && !seen.has(y)) stack.push(y); }
+    }
+    if (comp.length > 1) groups.push(comp);
+  }
+  return groups;
+}
+
+async function renderNoms() {
+  const box = h("div"), body = h("div");
+  const F = S.f = S.f || { q: "", cat: "", statut: "", conf: "", coche: "", weak: false, page: 0 };
+  async function detect() {
+    box.replaceChildren(h("p", { class: "muted" }, "Détection en cours…"));
+    try { S.det = await api("POST", "/api/detect", {}); S.rows = S.det.candidats.map(newRow); box.replaceChildren(); draw(); }
+    catch (e) { box.replaceChildren(msg("err", e.message)); }
+  }
+  const visible = () => S.rows.filter((r) => {
+    if (!F.weak && r.confiance === "faible" && r.statut !== "connu" && !r.touched) return false;
+    if (F.cat && r.cat !== F.cat) return false;
+    if (F.statut && r.statut !== F.statut) return false;
+    if (F.conf && r.confiance !== F.conf) return false;
+    if (F.coche === "oui" && !r.checked) return false;
+    if (F.coche === "non" && r.checked) return false;
+    if (F.q) { const q = F.q.toLowerCase(); if (!r.nom.toLowerCase().includes(q) && !r.variantes.some((v) => v.texte.toLowerCase().includes(q))) return false; }
+    return true;
+  });
+  const PAGE = 40;
+
+  function rowView(r) {
+    const chk = h("input", { type: "checkbox", checked: r.checked, "aria-label": "À pseudonymiser" });
+    chk.addEventListener("change", () => { r.checked = chk.checked; r.touched = r.touched || r.checked !== r.defaultChecked; stats(); });
+    const sel = h("input", { type: "checkbox", checked: r.sel, "aria-label": "Sélectionner" });
+    sel.addEventListener("change", () => { r.sel = sel.checked; });
+    const cat = h("select", { disabled: !!r.pseudo }, ...CAT_ORDER.filter((c) => c !== "SOC" || r.cat === "SOC").map((c) => h("option", { value: c, selected: r.cat === c }, c + " · " + S.state.categories[c])));
+    cat.addEventListener("change", () => { r.cat = cat.value; r.touched = true; });
+    const badges = [h("span", { class: "pill" }, SOURCES[r.source] || r.source),
+      r.statut === "liste_blanche" && h("span", { class: "pill warn" }, "liste blanche"),
+      r.statut === "connu" && h("span", { class: "pill ok" }, r.pseudo || "connu"),
+      r.source === "libelle" && h("span", { class: "pill " + (r.confiance === "haute" ? "ok" : r.confiance === "moyenne" ? "warn" : "") }, "confiance " + r.confiance),
+      r.merge_with.length > 0 && h("span", { class: "pill warn" }, "fusion proposée")];
+    const det = h("div", { class: "ndetail" },
+      r.variantes.length > 0 && h("div", {}, h("strong", {}, "Variantes d'écriture (cochées = recherchées partout) :"),
+        r.variantes.map((v) => { const c = h("input", { type: "checkbox", checked: v.coche }); c.addEventListener("change", () => { v.coche = c.checked; r.touched = true; });
+          return h("label", { class: "var" }, c, " ", v.texte, " ", h("span", { class: "muted" }, "(" + v.n + " · " + v.origine + (v.risque ? " · risque d'homonymie" : "") + ")")); })),
+      r.proposees.length > 0 && h("div", {}, h("strong", {}, "Écritures possibles de ce nom (à cocher pour les inclure) :"),
+        r.proposees.map((v) => { const c = h("input", { type: "checkbox", checked: v.coche }); c.addEventListener("change", () => {
+            v.coche = c.checked; r.touched = true;
+            if (c.checked) addVariant(r, { texte: v.texte, n: v.n, origine: "variante proposée", risque: v.risque, coche: true });
+            else r.variantes = r.variantes.filter((x) => x.texte !== v.texte);
+          });
+          return h("label", { class: "var" }, c, " ", v.texte, " ", h("span", { class: "muted" }, "(" + v.n + (v.risque ? " · risque d'homonymie" : "") + ")")); })),
+      r.exemples.length > 0 && h("div", {}, h("strong", {}, "Exemples (affichés en local uniquement) :"), r.exemples.map((x) => h("div", { class: "ex" }, x))),
+      h("div", { class: "muted" }, "Champs : " + Object.entries(r.champs).map(([k, v]) => k + " " + v).join(", ") + (r.comptes.length ? " · Comptes : " + r.comptes.join(", ") + (r.nb_comptes > r.comptes.length ? "…" : "") : "")),
+      r.notes.filter((n) => !n.startsWith("forme")).map((n) => h("div", { class: "msg warn" }, n)));
+    const d = h("details", { open: r.open }, h("summary", {}, "Détails"), det);
+    d.addEventListener("toggle", () => { r.open = d.open; });
+    return h("div", { class: "nrow" + (r.checked ? " on" : "") },
+      h("div", { class: "ncheck" }, chk, h("span", { class: "muted" }, "pseudo."), sel, h("span", { class: "muted" }, "fusion")),
+      h("div", { class: "nmain" }, h("div", { class: "nname" }, r.nom), h("div", { class: "nbadges" }, badges), d),
+      h("div", { class: "nside" }, cat, h("div", { class: "muted" }, fmtI(r.occurrences) + " occurrence(s)")));
+  }
+
+  function stats() {
+    const n = S.rows.filter((r) => r.checked).length, weak = S.rows.filter((r) => r.confiance === "faible" && !r.touched && r.statut !== "connu").length;
+    S.statEl.textContent = n + " à pseudonymiser sur " + S.rows.length + " propositions" + (weak && !F.weak ? " · " + weak + " propositions peu fiables masquées" : "");
+  }
+
+  function draw() {
+    const vis = visible(), pages = Math.max(1, Math.ceil(vis.length / PAGE)); F.page = Math.min(F.page, pages - 1);
+    const groups = mergeGroups();
+    S.statEl = h("strong", { id: "stat" });
+    const sel = (opts, key, label) => { const s = h("select", {}, ...opts.map(([v, t]) => h("option", { value: v, selected: F[key] === v }, t))); s.addEventListener("change", () => { F[key] = s.value; F.page = 0; draw(); }); return h("label", { class: "flt" }, label, s); };
+    const q = h("input", { type: "search", placeholder: "Rechercher un nom ou une variante", value: F.q }); q.addEventListener("input", () => { F.q = q.value; F.page = 0; clearTimeout(S.tq); S.tq = setTimeout(draw, 250); });
+    const wk = h("input", { type: "checkbox", checked: F.weak }); wk.addEventListener("change", () => { F.weak = wk.checked; F.page = 0; draw(); });
+    const dr = S.det;
+    const manNom = h("input", { placeholder: "Nom à ajouter (ex. Jean DUPONT)" }), manCat = h("select", {}, ...CAT_ORDER.filter((c) => c !== "SOC").map((c) => h("option", { value: c }, c + " · " + S.state.categories[c])));
+    put(body,
+      dr.conflits.length > 0 && h("div", { class: "msg err" }, h("strong", {}, "Conflits à résoudre avant pseudonymisation : "), "un même texte est rattaché à deux entités — ",
+        dr.conflits.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; "), ". Décochez une variante ou fusionnez les entités."),
+      dr.sensibles.total > 0 && h("div", { class: "card" }, h("strong", {}, "Motifs sensibles détectés (remplacés par des jetons neutres, non réversibles) : "),
+        h("table", {}, h("tbody", {}, dr.sensibles.types.map((t) => h("tr", {}, h("td", {}, t.type), h("td", { class: "num" }, fmtI(t.n)), h("td", {}, Object.keys(t.champs).join(", ")), h("td", {}, t.exemple), h("td", {}, "→ " + t.remplacement)))))),
+      dr.incrustations.message && h("div", { class: "msg warn" }, dr.incrustations.message + " (CompAuxNum : " + dr.incrustations.CompAuxNum + ", CompteNum : " + dr.incrustations.CompteNum + ")"),
+      groups.length > 0 && h("div", { class: "msg warn" }, groups.length + " regroupement(s) de variantes proposé(s) (même nom écrit différemment). ",
+        h("button", { class: "small", onclick: () => { groups.forEach(mergeRows); draw(); } }, "Appliquer tous les regroupements"), " Vous pouvez aussi fusionner à la main."),
+      h("div", { class: "card" }, S.statEl,
+        h("div", { class: "filters" }, q, sel([["", "Toutes catégories"], ...CAT_ORDER.map((c) => [c, c])], "cat", ""), sel([["", "Tous statuts"], ["nouveau", "Nouveaux"], ["connu", "Connus"], ["liste_blanche", "Liste blanche"]], "statut", ""),
+          sel([["", "Toute confiance"], ["haute", "Haute"], ["moyenne", "Moyenne"], ["faible", "Faible"]], "conf", ""), sel([["", "Cochés ou non"], ["oui", "Cochés"], ["non", "Non cochés"]], "coche", ""),
+          h("label", { class: "flt" }, wk, " afficher les propositions peu fiables")),
+        h("div", { class: "actions" },
+          h("button", { class: "ghost small", onclick: () => { vis.forEach((r) => { r.checked = true; r.touched = r.touched || !r.defaultChecked; }); draw(); } }, "Cocher les " + vis.length + " affichés"),
+          h("button", { class: "ghost small", onclick: () => { vis.forEach((r) => { r.checked = false; r.touched = r.touched || r.defaultChecked; }); draw(); } }, "Décocher les affichés"),
+          h("button", { class: "ghost small", onclick: () => { const s = S.rows.filter((r) => r.sel); if (s.length < 2) return alert("Sélectionnez au moins deux lignes (colonne « fusion »)."); mergeRows(s); draw(); } }, "Fusionner la sélection"),
+          h("button", { class: "ghost small", onclick: addWhitelist }, "Ajouter la sélection à la liste blanche"))),
+      h("div", {}, vis.slice(F.page * PAGE, F.page * PAGE + PAGE).map(rowView)),
+      h("div", { class: "actions" }, h("button", { class: "ghost small", disabled: F.page === 0, onclick: () => { F.page--; draw(); } }, "← Précédent"), h("span", { class: "muted" }, "Page " + (F.page + 1) + " / " + pages + " (" + vis.length + " lignes)"),
+        h("button", { class: "ghost small", disabled: F.page >= pages - 1, onclick: () => { F.page++; draw(); } }, "Suivant →")),
+      h("div", { class: "card" }, h("strong", {}, "Ajout manuel d'un nom"), h("div", { class: "row" }, manNom, manCat),
+        h("div", { class: "actions" }, h("button", { class: "ghost small", onclick: () => {
+          if (!manNom.value.trim()) return;
+          S.rows.unshift(newRow({ key: manNom.value.trim().toLowerCase(), uid: null, nom: manNom.value.trim(), cat: manCat.value, checked: true, source: "manuel", confiance: "haute", statut: "nouveau", liste_blanche: null, pseudo: null, variantes: [], champs: {}, comptes: [], nb_comptes: 0, exemples: [], occurrences: 0, notes: [], merge_with: [] }));
+          S.rows[0].touched = true; draw(); } }, "Ajouter"))),
+      h("div", { class: "actions" }, h("button", { onclick: save }, "Enregistrer les décisions")));
+    stats();
+  }
+
+  async function addWhitelist() {
+    const sel = S.rows.filter((r) => r.sel); if (!sel.length) return alert("Sélectionnez des lignes (colonne « fusion »).");
+    if (!confirm("Ajouter " + sel.length + " tiers à la liste blanche du CABINET ? Ils ne seront plus pseudonymisés par défaut dans tous les dossiers. L'ajout est tracé.")) return;
+    for (const r of sel) { try { await api("POST", "/api/whitelist/add", { nom: r.nom }); r.statut = "liste_blanche"; r.checked = false; r.touched = true; r.sel = false; } catch (e) { box.append(msg("err", e.message)); } }
+    draw();
+  }
+  async function save() {
+    const rows = S.rows.filter((r) => r.checked || r.touched || ["aux", "compte", "fiche", "table", "manuel"].includes(r.source)).map((r) => ({
+      uid: r.uid, nom: r.nom, cat: r.cat, checked: r.checked, source: r.source, touched: r.touched,
+      variantes: r.variantes.filter((v) => v.coche).map((v) => v.texte), absorbed_uids: r.absorbed_uids }));
+    box.replaceChildren();
+    try {
+      const out = await api("POST", "/api/entities/save", { rows });
+      box.append(msg(out.bloquant ? "err" : "ok", out.a_pseudonymiser + " entité(s) à pseudonymiser enregistrée(s) dans la table chiffrée (" + out.created + " créée(s), " + out.updated + " mise(s) à jour)."));
+      out.warnings.forEach((w) => box.append(msg("warn", w)));
+      if (out.conflicts.length) box.append(msg("err", "Conflits : " + out.conflicts.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; ")));
+      await detectQuiet();
+    } catch (e) { box.append(msg("err", e.message)); }
+  }
+  async function detectQuiet() { /* recharge l'état connu sans perdre les choix : pseudonymes attribués */
+    const prev = new Map(S.rows.map((r) => [r.nom.toLowerCase(), r]));
+    S.det = await api("POST", "/api/detect", {});
+    const fresh = S.det.candidats.map(newRow);
+    fresh.forEach((r) => { const o = prev.get(r.nom.toLowerCase()); if (o) { r.sel = false; r.open = o.open; } });
+    S.rows = fresh; draw();
+  }
+
+  main.append(h("h1", {}, "Noms à valider"),
+    h("p", { class: "muted" }, "Propositions de pseudonymisation issues du FEC et de la fiche dossier. Les propositions heuristiques tirées des libellés sont indicatives : vérifiez-les. Les tiers usuels (liste blanche) sont maintenus sauf si vous les cochez."),
+    box, body);
+  if (S.det && S.rows) draw(); else await detect();
 }
 
 // ------------------------------------------------------------------ boutons du haut
