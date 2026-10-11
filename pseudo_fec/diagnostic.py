@@ -51,7 +51,15 @@ def run_checks(cfg: Config, listen: tuple[str, int] | None = None) -> list[dict[
     out: list[dict[str, Any]] = []
     out.append(_check("Python", lambda: (sys.version_info >= (3, 11), f"{platform.python_version()} sur {platform.system()} {platform.release()}"
                                          + ("" if sys.version_info >= (3, 11) else " — Python 3.11 ou plus requis"))))
-    out.append(_check("Composants", lambda: (True, ", ".join(f"{p} {md.version(p)}" for p in ("cryptography", "rapidfuzz")))))
+    def components():
+        parts = [f"cryptography {md.version('cryptography')}"]
+        try:
+            import rapidfuzz  # noqa: F401
+            parts.append(f"rapidfuzz {md.version('rapidfuzz')}")
+        except ImportError:
+            parts.append("rapidfuzz absent (comparaison de noms en mode de secours, sans conséquence sur la sécurité)")
+        return True, ", ".join(parts)
+    out.append(_check("Composants", components))
 
     def crypto_check():
         saved = dict(crypto.KDF_DEFAULT)

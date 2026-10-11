@@ -7,7 +7,15 @@ ré-identifie les restitutions. Interface HTML servie sur `127.0.0.1` par l'appl
 Prochains jalons : (c) pseudonymisation du FEC, (d) texte libre,
 (e–g) ré-identification DOCX/XLSX/PPTX, (h) verrouillage et audit, (i) packaging Windows.
 
-## Lancer et tester sur son poste (sans PowerShell)
+## Dossier portable prêt à copier (recommandé pour le pilote)
+
+`python scripts/build_portable.py` construit `dist/Pseudo-FEC-<version>-windows-portable.zip` : Python 3.13 officiel
+(NuGet, Python Software Foundation) + composants Windows épinglés + application. **Rien à installer, aucune connexion
+Internet.** `python scripts/verify_portable.py <zip> --smoke` le contrôle (structure, exécutables Windows AMD64, imports
+résolus, aucun fichier sensible, démarrage et auto-diagnostic de l'application extraite). L'exécution sous Windows
+elle-même n'est pas testable depuis Linux : à valider sur un poste réel. Le guide embarqué est `DEMARRER.html`.
+
+## Lancer depuis le dépôt (développement)
 
 1. Installer **Python 3.13** une fois (« Add python.exe to PATH » coché, sans droit administrateur).
 2. Décompresser le dossier (ZIP débloqué : clic droit → Propriétés → Débloquer).

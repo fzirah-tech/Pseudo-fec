@@ -149,3 +149,10 @@ def test_resultat_sans_fuite_dans_les_statistiques():
     res, _ = run("standard")
     blob = repr(res.stats) + repr(res.incrustations)
     assert "BENALI" not in blob and "DUPONT" not in blob
+
+
+def test_repli_sans_rapidfuzz():
+    from pseudo_fec.detection import _similarity_fallback as sim
+    assert sim("etablissements lefevre dubois", "etablissement lefevre dubois") >= 93     # faute de frappe : fusion proposée
+    assert sim("dupont batiment", "martinez fils") < 70
+    assert sim("benali karim", "karim benali") == 100                                      # ordre des mots indifférent

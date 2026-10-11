@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Démarrer Pseudo-FEC</title>
+<style>
+:root{--bg:#f6f5f3;--card:#fff;--ink:#2b2f33;--muted:#6b7077;--navy:#33445c;--line:#d9d5ce;--taupe:#a39a8e;--warn:#9a6b00}
+@media (prefers-color-scheme:dark){:root{--bg:#1f2326;--card:#2a2f33;--ink:#e8e6e2;--muted:#9aa0a6;--navy:#8aa0c0;--line:#40464b;--taupe:#8d857a;--warn:#e0b050}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 "Segoe UI",system-ui,sans-serif}
+main{max-width:820px;margin:0 auto;padding:28px 16px 56px}
+h1{font-size:26px;color:var(--navy);margin:0 0 4px}h2{font-size:18px;color:var(--navy);margin:32px 0 8px}
+.lead{color:var(--muted);margin:0 0 18px}
+.step{display:grid;grid-template-columns:44px 1fr;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
+.n{width:36px;height:36px;border-radius:50%;background:var(--navy);color:var(--card);display:grid;place-items:center;font-weight:700}
+.step h3{margin:0 0 4px;font-size:17px}.step p{margin:4px 0}
+code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:14px}
+.note{border-left:4px solid var(--taupe);padding:6px 12px;color:var(--muted);margin:10px 0}.warn{border-left-color:var(--warn)}
+details{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;margin:8px 0}summary{cursor:pointer;font-weight:600;color:var(--navy)}
+</style>
+</head>
+<body>
+<main>
+<h1>Démarrer Pseudo-FEC</h1>
+<p class="lead">Version portable : rien à installer, aucune connexion Internet, aucun droit administrateur. Toutes vos données restent sur cet ordinateur.</p>
+
+<div class="step"><div class="n">1</div><div>
+<h3>Débloquer puis décompresser l'archive</h3>
+<p>Clic droit sur le fichier <code>.zip</code> → <em>Propriétés</em> → cochez <strong>« Débloquer »</strong> → OK. Puis clic droit → <em>Extraire tout…</em></p>
+<p>Choisissez un emplacement <strong>court et local</strong>, par exemple <code>C:\Pseudo-FEC</code> (évitez le Bureau, OneDrive et les dossiers réseau).</p>
+</div></div>
+
+<div class="step"><div class="n">2</div><div>
+<h3>Double-cliquer sur « Lancer-Pseudo-FEC »</h3>
+<p>Une fenêtre noire s'ouvre, puis votre navigateur affiche l'application. <strong>Gardez la fenêtre noire ouverte</strong> pendant l'utilisation : c'est elle qui fait tourner l'outil. Le bouton « Quitter » de la page l'arrête proprement.</p>
+<div class="note warn">Si Windows affiche « Windows a protégé votre ordinateur » : <em>Informations complémentaires</em> → <em>Exécuter quand même</em>. Le fichier de lancement n'est pas signé numériquement à ce stade du pilote.</div>
+</div></div>
+
+<div class="step"><div class="n">3</div><div>
+<h3>Définir la phrase secrète du cabinet</h3>
+<p>À la première utilisation, saisissez-la <strong>deux fois</strong>. Elle chiffre les tables de correspondance (les vrais noms) et n'est enregistrée nulle part : <strong>en cas de perte, les tables sont irrécupérables</strong>. Conservez-la dans le coffre du cabinet.</p>
+</div></div>
+
+<div class="step"><div class="n">4</div><div>
+<h3>Essayer sans vos données : bouton « Aide et test »</h3>
+<p>• <strong>Lancer la démo</strong> : dossier fictif avec deux exercices déjà importés.<br>
+• <strong>Télécharger le FEC fictif</strong> : pour tester l'import par glisser-déposer.<br>
+• <strong>Auto-diagnostic</strong> puis <strong>« Copier le rapport »</strong> : texte sans aucune donnée de dossier, à transmettre en cas de problème.<br>
+• <strong>Ouvrir le dossier des tables / des sorties</strong> dans l'Explorateur.</p>
+</div></div>
+
+<h2>Questions fréquentes</h2>
+<details><summary>Rien ne s'affiche / la fenêtre se ferme aussitôt</summary>
+<p>Relancez <code>Lancer-Pseudo-FEC</code> et lisez le message dans la fenêtre noire. Si l'antivirus a mis un fichier en quarantaine, restaurez-le ou demandez à l'informatique d'autoriser le dossier <code>Pseudo-FEC</code>. Le dossier doit rester complet (ne déplacez pas le fichier de lancement seul).</p></details>
+<details><summary>Le navigateur ne s'ouvre pas</summary>
+<p>Copiez l'adresse affichée dans la fenêtre noire (elle commence par <code>http://127.0.0.1</code>) dans la barre d'adresse.</p></details>
+<details><summary>« Session non autorisée »</summary>
+<p>Fermez l'onglet et la fenêtre noire, puis relancez : l'adresse change à chaque lancement.</p></details>
+<details><summary>Où sont mes données ?</summary>
+<p>Tables chiffrées : <code>%LOCALAPPDATA%\PseudoFEC\tables</code>. Fichiers produits : <code>Documents\PseudoFEC\sorties</code>. Le bouton « Aide et test » les ouvre directement. Ne supprimez pas le dossier des tables.</p></details>
+<details><summary>Mettre à jour l'application</summary>
+<p>Fermez l'application, supprimez le dossier <code>Pseudo-FEC</code>, extrayez la nouvelle archive au même endroit. Vos tables ne sont pas dans ce dossier : elles ne sont pas touchées.</p></details>
+<details><summary>Que contient ce dossier ?</summary>
+<p><code>python</code> : Python 3.13 officiel (Python Software Foundation), avec ses composants. <code>app</code> : l'application. <code>INVENTAIRE-COMPOSANTS.txt</code> : composants, versions et licences. <code>VERSION.txt</code> : version et empreintes.</p></details>
+<details><summary>Désinstaller</summary>
+<p>Supprimez le dossier <code>Pseudo-FEC</code>. Les tables restent dans <code>%LOCALAPPDATA%\PseudoFEC</code> jusqu'à ce que vous les supprimiez vous-même.</p></details>
+
+<p class="lead" style="margin-top:28px">Version pilote : voir les limites connues dans le fichier <code>README.md</code> du dépôt avant tout usage sur des dossiers sensibles.</p>
+</main>
+</body>
+</html>

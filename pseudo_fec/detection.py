@@ -18,7 +18,17 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from rapidfuzz import fuzz
+try:                                    # accélérateur facultatif : l'outil fonctionne sans lui
+    from rapidfuzz import fuzz as _fuzz
+
+    def _similarity(a: str, b: str) -> float:
+        return _fuzz.token_sort_ratio(a, b)
+except ImportError:  # pragma: no cover - dépend de l'installation
+    _fuzz = None
+    from difflib import SequenceMatcher
+
+    def _similarity(a: str, b: str) -> float:
+        return _similarity_fallback(a, b)
 
 from . import redact
 from .fec_io import FecFile
@@ -46,6 +56,12 @@ def category_for_prefix(p3: str) -> str:
     if p3[:2] in ("26", "27"):
         return "GRP"
     return "TIE"
+
+
+def _similarity_fallback(a: str, b: str) -> float:
+    """Similarité 0-100 (mots triés) avec la seule bibliothèque standard."""
+    from difflib import SequenceMatcher
+    return 100 * SequenceMatcher(None, " ".join(sorted(a.split())), " ".join(sorted(b.split()))).ratio()
 
 
 # ------------------------------------------------------------------ relevé dans un FEC
@@ -547,7 +563,7 @@ def _suggest_merges(cands: list[Candidate]) -> None:
                 tb = [t for t in tokens(b.nom) if t not in LEGAL_FORMS and t not in LINK_WORDS]
                 ka, kb = " ".join(sorted(ta)), " ".join(sorted(tb))
                 ok = ka == kb or _same_person_tokens(ta, tb) or (
-                    min(len(ka), len(kb)) >= 8 and fuzz.token_sort_ratio(ka, kb) >= 93)
+                    min(len(ka), len(kb)) >= 8 and _similarity(ka, kb) >= 93)
                 if ok:
                     a.merge_with.append(b.key)
                     b.merge_with.append(a.key)
