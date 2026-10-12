@@ -55,6 +55,15 @@ def company_parts(nom: str) -> list[dict[str, Any]]:
     return out
 
 
+def derived_variants(texte: str) -> list[tuple[str, str]]:
+    """Formes tronquées ou mal saisies d'un mot distinctif (DURAND -> DURAN, URAND), à proposer à la validation."""
+    t = texte.strip()
+    if len(t) < 6 or not re.fullmatch(r"[^\W\d_]+", t):
+        return []
+    return [(t[:-1], f"variante de « {t} » (dernière lettre omise)"),
+            (t[1:], f"variante de « {t} » (première lettre omise)")]
+
+
 def is_person(nom: str, cat: str) -> bool:
     return (cat in ("SAL", "ASS") and not any(fold(t) in LEGAL_FORMS for t in TOKEN_RE.findall(nom))) \
         or (cat in ("TIE", "CLI", "FRN") and looks_like_person(nom))
@@ -64,4 +73,14 @@ def parts_for(nom: str, cat: str) -> list[dict[str, Any]]:
     is_person_ = is_person(nom, cat)
     if cat == "SOC" and not nom:
         return []
-    return person_parts(nom) if is_person_ else company_parts(nom)
+    if is_person_:
+        return person_parts(nom)
+    parts = company_parts(nom)
+    if cat in ("GRP", "SOC"):
+        seen = {fold(nom), *(fold(p["texte"]) for p in parts)}
+        for p in [p for p in parts if p["kind"] == "partie distinctive"]:
+            for v, kind in derived_variants(p["texte"]):
+                if fold(v) not in seen:
+                    seen.add(fold(v))
+                    parts.append({"texte": v, "kind": kind, "derive": True})
+    return parts

@@ -82,6 +82,10 @@ salaire côté banque est donc en contexte de paie.
 - **Parties identifiantes** : pour chaque nom, ses parties (nom de famille, prénom, composants hyphénés ; pour une société, la
   partie distinctive d'une raison sociale longue). Portée au choix : « contextes sensibles » (défaut pour les personnes) ou « partout »
   (défaut pour la partie distinctive d'une société liée, sauf mot courant, trop court ou partagé).
+- **Sociétés liées** : un nom à raison sociale porté par les comptes 451, 455-458, 467 ou 26x est proposé comme « Société liée ».
+  Pour chaque partie distinctive (DURAND), l'outil propose aussi les **formes tronquées** : dernière lettre omise (DURAN) et
+  première lettre omise (URAND), avec leur nombre d'occurrences dans le FEC. Les notes de frais de salariés en 425 ou 467 restent
+  couvertes (la partie « contextes » d'un salarié s'applique aussi en contexte compte courant).
 - **Homonymes** : en contexte de paie le salarié l'emporte sur un fournisseur homonyme ; à priorité égale (holding / associé
   « DESCHAMPS ») c'est un conflit bloquant à **arbitrer** (attribuer à une entité ou laisser en clair).
 - Un mot isolé relevé en paie, provision ou compte courant et non reconnu est proposé (non coché) : validez-le dans la synthèse.

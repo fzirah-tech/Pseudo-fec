@@ -32,7 +32,7 @@ DEFAULT_CABINET: dict[str, Any] = {
         "personnel": ["421", "422", "425", "427", "428"],
         "groupe_associes": ["451", "455", "456", "457", "458"],
         "divers": ["467"],
-        "participations_prets": ["261", "266", "267", "271", "274", "275"],
+        "participations_prets": ["260", "261", "262", "263", "264", "265", "266", "267", "268", "269", "271", "274", "275"],
         "emprunts": ["164", "165", "168"],
     },
     # Liste initiale À VALIDER par le cabinet (correspondance sur le tiers entier,

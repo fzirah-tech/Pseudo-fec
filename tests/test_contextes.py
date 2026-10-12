@@ -229,3 +229,53 @@ def test_priorite_de_la_paie_sur_les_autres_contextes():
     # en provisions seules : conflit (rang égal côté contextes) ; en paie : le salarié l'emporte
     ctx = " ".join(c["contexte"] or "" for c in out["conflicts"]).lower()
     assert "provisions" in ctx and "paie" not in ctx
+
+
+# ---------------------------------------------------------------- sociétés liées en 455 / 467 / 26 et variantes tronquées
+
+def _lines_liees():
+    return [
+        ("OD", 1, "455000", "DURAND CONSULTING", "", "", "Refacturation DURAND mars", "100,00", "0,00"),
+        ("OD", 1, "512000", "Banque", "", "", "Refacturation DURAND mars", "0,00", "100,00"),
+        ("OD", 2, "467000", "SCI LES TILLEULS", "", "", "Avance TILLEULS", "50,00", "0,00"),
+        ("OD", 2, "512000", "Banque", "", "", "Avance TILLEULS", "0,00", "50,00"),
+        ("OD", 3, "261000", "TITRES BERNARD HOLDING", "", "", "Refacturation DURAN avril", "10,00", "0,00"),
+        ("OD", 3, "512000", "Banque", "", "", "Refacturation DURAN avril", "0,00", "10,00"),
+        ("OD", 4, "455000", "DURAND CONSULTING", "", "", "Acompte URAND mai", "20,00", "0,00"),
+        ("OD", 4, "512000", "Banque", "", "", "Acompte URAND mai", "0,00", "20,00"),
+        ("OD", 5, "467000", "Marine LEFEBVRE", "", "", "NDF Marine LEFEBVRE", "30,00", "0,00"),
+        ("OD", 5, "512000", "Banque", "", "", "NDF Marine LEFEBVRE", "0,00", "30,00"),
+    ]
+
+
+def test_societes_liees_en_455_467_26_sont_proposees_comme_groupe():
+    p = new_payload("D")
+    res = detect([mini(_lines_liees())], p, PREF, WL)
+    assert by_name(res, "DURAND CONSULTING").cat == "GRP"
+    assert by_name(res, "SCI LES TILLEULS").cat == "GRP"
+    bern = next(c for c in res.candidates if "BERNARD" in c.nom)          # « TITRES » (mot de compte) est retiré du nom
+    assert bern.cat == "GRP" and "BERNARD" in {x["texte"] for x in bern.parties}
+
+
+def test_variantes_tronquees_d_une_societe_liee_proposees_et_trouvees():
+    p = new_payload("D")
+    res = detect([mini(_lines_liees())], p, PREF, WL)
+    parts = {x["texte"]: x for x in by_name(res, "DURAND CONSULTING").parties}
+    assert {"DURAND", "DURAN", "URAND"} <= set(parts)
+    assert parts["DURAND"]["n"] >= 1 and parts["DURAN"]["n"] == 2 and parts["URAND"]["n"] == 2
+    assert all(parts[k]["actif"] and parts[k]["portee"] == "partout" for k in ("DURAND", "DURAN", "URAND"))
+    assert "dernière lettre omise" in parts["DURAN"]["kind"] and "première lettre omise" in parts["URAND"]["kind"]
+
+
+def test_variantes_tronquees_pseudonymisees_et_salarie_en_467():
+    p = new_payload("D")
+    fec = mini(_lines_liees())
+    res = detect([fec], p, PREF, WL)
+    rows = [{"nom": c.nom, "cat": c.cat, "checked": True, "source": c.source, "touched": True,
+             "variantes": [], "parties": [{"texte": x["texte"], "portee": x["portee"], "actif": x["actif"]} for x in c.parties]}
+            for c in res.candidates if c.checked]
+    apply_validation(p, rows)
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    for mot in ("DURAND", "DURAN ", "URAND", "TILLEULS", "LEFEBVRE"):
+        assert mot not in txt, mot

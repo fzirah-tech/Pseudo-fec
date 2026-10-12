@@ -35,7 +35,7 @@ from .contexts import CONTEXT_LABELS, DEFAULT_CONTEXTS, contexts_for_accounts
 from .parties import is_person, parts_for
 from .fec_io import FecFile
 from .generic_list import Whitelist
-from .lexicon import GENERIC_ACCOUNT_WORDS, PAYROLL_PREFIXES, SALARY_WORDS, STOPWORDS
+from .lexicon import GENERIC_ACCOUNT_WORDS, GENERIC_COMPANY_WORDS, PAYROLL_PREFIXES, SALARY_WORDS, STOPWORDS
 from .textmatch import LEGAL_FORMS, LINK_WORDS, NameMatcher, fold, fold_text, name_key, tokens
 
 TOKEN_RE = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*")
@@ -58,6 +58,15 @@ def category_for_prefix(p3: str) -> str:
     if p3[:2] in ("26", "27"):
         return "GRP"
     return "TIE"
+
+
+def refine_category(name: str, p3: str, cat: str) -> str:
+    """Un nom à raison sociale (forme juridique, mot de société) porté par un compte de groupe, d'associé ou
+    divers (451, 455, 456-458, 467) est une société liée, pas un associé ni un « autre tiers »."""
+    if p3 in ("451", "455", "456", "457", "458", "467") and cat in ("ASS", "TIE", "GRP") \
+            and any(fold(t) in LEGAL_FORMS or fold(t) in GENERIC_COMPANY_WORDS for t in TOKEN_RE.findall(name)):
+        return "GRP"
+    return cat
 
 
 def _similarity_fallback(a: str, b: str) -> float:
@@ -381,7 +390,8 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
     for (name, p3), n in hv.aux.items():
         aux_by_name[name][p3] += n
     for name, prefs in aux_by_name.items():
-        cat = category_for_prefix(prefs.most_common(1)[0][0])
+        p3 = prefs.most_common(1)[0][0]
+        cat = refine_category(name, p3, category_for_prefix(p3))
         c = get(name, name, cat, "aux")
         c.variants.setdefault(name, 0)
         c.champs["CompAuxLib"] += sum(prefs.values())
@@ -397,7 +407,7 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             name = _strip_generic_edges(lib)
             if not name or fold(name) in STOPWORDS:
                 continue
-            c = get(name, name, category_for_prefix(p3), "compte")
+            c = get(name, name, refine_category(name, p3, category_for_prefix(p3)), "compte")
             if all(_kind(t) == "x" for t in TOKEN_RE.findall(name)) and c.statut != "connu":
                 c.confiance = "faible"        # intitulé tout en minuscules : plutôt descriptif (« salaires 2022 ») qu'un nom
                 c.notes.append("Intitulé de compte en minuscules : probablement descriptif, non coché par défaut.")
@@ -621,7 +631,7 @@ def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None
     same = {c.key: {c.key, *c.merge_with} for c in pool}          # « Karim BENALI » et « BENALI Karim » : même personne
     items = []
     for c in pool:
-        c.parties = [{**p, "n": 0, "ctx": {}, "risque": []} for p in parts_for(c.nom, c.cat)[:10]]
+        c.parties = [{**p, "n": 0, "ctx": {}, "risque": []} for p in parts_for(c.nom, c.cat)[:16]]
         items += [(p["texte"], (c.key, i)) for i, p in enumerate(c.parties)]
     matcher = NameMatcher(items)
     for lib, e in hv.libs.items():
