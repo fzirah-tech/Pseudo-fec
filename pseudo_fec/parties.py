@@ -80,7 +80,7 @@ def expand_truncations(texte: str, min_total: int = 6) -> list[str]:
 
 def is_person(nom: str, cat: str) -> bool:
     return (cat in ("SAL", "ASS") and not any(fold(t) in LEGAL_FORMS for t in TOKEN_RE.findall(nom))) \
-        or (cat in ("TIE", "CLI", "FRN") and looks_like_person(nom))
+        or (cat in ("TIE", "CLI", "FRN", "DIV") and looks_like_person(nom))
 
 
 def parts_for(nom: str, cat: str) -> list[dict[str, Any]]:
@@ -90,7 +90,7 @@ def parts_for(nom: str, cat: str) -> list[dict[str, Any]]:
     if is_person_:
         return person_parts(nom)
     parts = company_parts(nom)
-    if cat in ("GRP", "SOC"):
+    if cat in ("GRP", "SOC", "DIV"):
         seen = {fold(nom), *(fold(p["texte"]) for p in parts)}
         for p in [p for p in parts if p["kind"] == "partie distinctive"]:
             for v, kind in derived_variants(p["texte"]):

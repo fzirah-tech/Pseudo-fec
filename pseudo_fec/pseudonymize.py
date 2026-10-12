@@ -53,7 +53,7 @@ def output_name(code: str, soc_pseudo: str | None, exercice: str | None, filenam
     return f"{base}_FEC_{(exercice or 'XXXX').replace('/', '-')}_PSEUDO{ext}"
 
 
-PREFERRED = {"paie": ("SAL",), "compte_courant": ("ASS", "GRP"), "provisions": ()}
+PREFERRED = {"paie": ("SAL",), "compte_courant": ("ASS", "GRP", "DIV"), "provisions": ()}
 
 
 def _truncations(ents: list[dict[str, Any]], base: list[tuple[str, str, int]]) -> list[tuple[str, str, int]]:
@@ -64,7 +64,7 @@ def _truncations(ents: list[dict[str, Any]], base: list[tuple[str, str, int]]) -
         exact.setdefault(" ".join(tokens(t)), set()).add(u)
     found: dict[str, set[str]] = {}
     for t, u, _ in base:
-        if cats.get(u) in ("GRP", "SOC"):
+        if cats.get(u) in ("GRP", "SOC", "DIV"):
             for x in expand_truncations(t):
                 found.setdefault(" ".join(tokens(x)), set()).add(u)
     return [(x, next(iter(us)), 1) for x, us in found.items()

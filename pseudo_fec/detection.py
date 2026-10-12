@@ -40,8 +40,11 @@ from .textmatch import LEGAL_FORMS, LINK_WORDS, NameMatcher, fold, fold_text, na
 
 TOKEN_RE = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*")
 CATS = {"CLI": "Client", "FRN": "Fournisseur", "SAL": "Salarié", "ASS": "Associé / dirigeant",
-        "GRP": "Société liée", "TIE": "Autre tiers", "SOC": "L'entité"}
+        "GRP": "Société liée", "DIV": "Divers (467 et assimilés)", "TIE": "Autre tiers", "SOC": "L'entité"}
 MAX_LIBS_EXAMPLES = 3
+
+
+DIV_PREFIXES = ("467", "468", "471", "486", "487")      # comptes divers : tous les noms sont à pseudonymiser
 
 
 def category_for_prefix(p3: str) -> str:
@@ -57,17 +60,19 @@ def category_for_prefix(p3: str) -> str:
         return "ASS"
     if p3[:2] in ("26", "27"):
         return "GRP"
+    if p3 in DIV_PREFIXES:
+        return "DIV"
     return "TIE"
 
 
 def refine_category(name: str, p3: str, cat: str) -> str:
-    """Un nom à raison sociale (forme juridique, mot de société) porté par un compte de groupe, d'associé ou
-    divers (451, 455, 456-458, 467) est une société liée, pas un associé ni un « autre tiers »."""
-    if p3 in ("451", "455", "456", "457", "458", "467") and cat in ("ASS", "TIE", "GRP") \
+    """Comptes divers (467, 468, 471, 486, 487) : préfixe DIV pour tous les noms. Un nom à raison sociale porté par un
+    compte de groupe ou d'associé (451, 455-458) est une société liée, pas un associé."""
+    if p3 in DIV_PREFIXES and cat in ("ASS", "TIE", "GRP", "DIV"):
+        return "DIV"
+    if p3 in ("451", "455", "456", "457", "458") and cat in ("ASS", "TIE", "GRP") \
             and any(fold(t) in LEGAL_FORMS or fold(t) in GENERIC_COMPANY_WORDS for t in TOKEN_RE.findall(name)):
         return "GRP"
-    if p3 == "467" and cat in ("ASS", "TIE") and not looks_like_person(name):
-        return "GRP"            # 467 : sociétés à lien relationnel, notaires, avances… traités comme société liée
     return cat
 
 
@@ -410,7 +415,7 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             if not name or fold(name) in STOPWORDS:
                 continue
             c = get(name, name, refine_category(name, p3, category_for_prefix(p3)), "compte")
-            if all(_kind(t) == "x" for t in TOKEN_RE.findall(name)) and c.statut != "connu":
+            if all(_kind(t) == "x" for t in TOKEN_RE.findall(name)) and c.statut != "connu" and p3 != "467":
                 c.confiance = "faible"        # intitulé tout en minuscules : plutôt descriptif (« salaires 2022 ») qu'un nom
                 c.notes.append("Intitulé de compte en minuscules : probablement descriptif, non coché par défaut.")
             c.variants.setdefault(name, 0)
@@ -565,10 +570,11 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
         cands.setdefault(f, w)
     for c in cands.values():          # nom récurrent en paie / 421 / 425 / 467 / 64 : retenu (à confirmer)
         toks = tokens(c.nom)
-        if (c.source in ("libelle", "contexte") and c.statut != "connu" and c.contextes.get("paie", 0) >= 2
+        if (c.source in ("libelle", "contexte") and c.statut != "connu"
+                and (c.contextes.get("paie", 0) >= 2 or c.cat == "DIV")
                 and toks and not all(is_common(t) for t in toks) and not any(t in LEGAL_FORMS for t in toks)
-                and not whitelist.matches(c.nom) and c.cat in ("SAL", "TIE")):
-            c.cat, c.confiance = "SAL", "haute"
+                and not whitelist.matches(c.nom) and c.cat in ("SAL", "TIE", "DIV")):
+            c.cat, c.confiance = ("DIV" if c.cat == "DIV" else "SAL"), "haute"
             c.notes.append("Nom récurrent dans les écritures de paie, de personnel ou de notes de frais : retenu (à confirmer).")
 
     # 5. liste blanche, pré-cochage, exemples
@@ -642,7 +648,7 @@ def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None
     for c in pool:
         c.parties = [{**p, "n": 0, "ctx": {}, "risque": []} for p in parts_for(c.nom, c.cat)[:16]]
         items += [(p["texte"], (c.key, i)) for i, p in enumerate(c.parties)]
-        if c.cat in ("GRP", "SOC"):          # libellé tronqué par la taille du champ : « DURAND CONSULTIN »
+        if c.cat in ("GRP", "SOC", "DIV"):          # libellé tronqué par la taille du champ : « DURAND CONSULTIN »
             items += [(x, (c.key, i)) for i, p in enumerate(c.parties) if p["kind"] != "ajoutée"
                       for x in expand_truncations(p["texte"])]
             items += [(x, (c.key, -1)) for x in expand_truncations(c.nom)]
@@ -668,9 +674,9 @@ def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None
                 p["partage_avec"] = others[:3]
             if len(p["texte"]) < (3 if person else 5):
                 p["risque"].append("trop court")
-            if c.cat in ("GRP", "SOC"):
+            if c.cat in ("GRP", "SOC", "DIV"):
                 p["portee"], p["actif"] = "partout", not p["risque"]
-            elif person and (c.cat in ("SAL", "ASS") or any(a.startswith("467") for a in c.comptes)):
+            elif person and c.cat in ("SAL", "ASS"):
                 p["portee"], p["actif"] = "contextes", "mot courant" not in p["risque"]
             else:       # société ordinaire ou personne « supposée » : proposé, à activer par l'utilisateur
                 p["portee"], p["actif"] = "contextes", False

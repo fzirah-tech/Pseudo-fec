@@ -262,7 +262,7 @@ async function renderFec() {
 }
 
 // ------------------------------------------------------------------ noms à valider
-const CAT_ORDER = ["CLI", "FRN", "SAL", "ASS", "GRP", "TIE", "SOC"];
+const CAT_ORDER = ["CLI", "FRN", "SAL", "ASS", "GRP", "DIV", "TIE", "SOC"];
 const SOURCES = { aux: "compte auxiliaire", compte: "libellé de compte", fiche: "fiche dossier", table: "table du dossier",
   libelle: "libellé d'écriture", manuel: "ajout manuel" };
 

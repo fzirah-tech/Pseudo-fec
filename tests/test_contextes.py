@@ -252,7 +252,7 @@ def test_societes_liees_en_455_467_26_sont_proposees_comme_groupe():
     p = new_payload("D")
     res = detect([mini(_lines_liees())], p, PREF, WL)
     assert by_name(res, "DURAND CONSULTING").cat == "GRP"
-    assert by_name(res, "SCI LES TILLEULS").cat == "GRP"
+    assert by_name(res, "SCI LES TILLEULS").cat == "DIV"          # 467 : préfixe DIV
     bern = next(c for c in res.candidates if "BERNARD" in c.nom)          # « TITRES » (mot de compte) est retiré du nom
     assert bern.cat == "GRP" and "BERNARD" in {x["texte"] for x in bern.parties}
 
@@ -325,7 +325,7 @@ def test_nom_recurrent_en_paie_et_en_467_retenu_et_pseudonymise():
     res = detect([fec], p, PREF, WL)
     for nom in ("ZEBRANSKY", "OLIVEIRA", "PETROVNA"):
         c = by_name(res, nom)
-        assert c.checked and c.cat == "SAL", nom
+        assert c.checked and c.cat in ("SAL", "DIV"), nom
     apply_validation(p, _valide(res))
     out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
     txt = out.data.decode() if hasattr(out, "data") else str(out)
@@ -347,3 +347,22 @@ def test_noms_du_467_tous_retenus_personnes_notaires_societes():
     txt = out.data.decode() if hasattr(out, "data") else str(out)
     for mot in ("LEFEBVRE", "MARCHETTI", "BOREAL"):
         assert mot not in txt, mot
+
+
+def test_comptes_divers_prefixe_div_minuscules_du_467_et_pseudonymisation_partout():
+    lines = []
+    for i, (cpt, nom, lib) in enumerate([("467000", "avance marchetti", "Avance"), ("468700", "Produits MOREAU", "PAR MOREAU"),
+                                         ("471000", "Attente GAUDIN", "Attente GAUDIN")], 1):
+        lines += [("OD", i, cpt, nom, "", "", lib, "10,00", "0,00"), ("OD", i, "512000", "Banque", "", "", lib, "0,00", "10,00")]
+    lines += [("AC", 9, "607000", "Achats", "", "", "Facture MOREAU mars", "5,00", "0,00"),
+              ("AC", 9, "401000", "Fournisseurs", "", "", "Facture MOREAU mars", "0,00", "5,00")]
+    fec, p = mini(lines), new_payload("D")
+    res = detect([fec], p, PREF, WL)
+    for c in res.candidates:
+        assert c.cat == "DIV" and c.checked, (c.nom, c.cat)
+    apply_validation(p, _valide(res))
+    assert all(e["pseudo"].startswith("DIV-") for e in p["entities"] if e.get("a_pseudonymiser"))
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    for mot in ("marchetti", "MOREAU", "GAUDIN"):
+        assert mot.lower() not in txt.lower(), mot            # y compris dans les achats (hors 467)
