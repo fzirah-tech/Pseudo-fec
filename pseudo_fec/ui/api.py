@@ -12,8 +12,9 @@ import os
 
 from .. import diagnostic
 from ..config import Config
-from ..demo_data import DEMO_FICHE, DEMO_STYLES, make_fec
-from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload
+from ..demo_data import DEMO_STYLES, make_fec
+from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload, set_societe, luhn_ok
+from ..fec_io import filename_info
 from ..detection import CATS, detect
 from ..generic_list import Whitelist, add_entry
 from ..errors import DossierError, PseudoFecError, TableError
@@ -58,6 +59,8 @@ class AppState:
                 ("GET", "/api/fec/list"): self.list_fecs,
                 ("POST", "/api/fec/remove"): lambda: self.remove_fec(data),
                 ("POST", "/api/detect"): self.run_detection,
+                ("GET", "/api/societe"): self.societe_state,
+                ("POST", "/api/societe/save"): lambda: self.save_societe(data),
                 ("POST", "/api/entities/save"): lambda: self.save_entities(data),
                 ("POST", "/api/whitelist/add"): lambda: self.whitelist_add(data),
                 ("GET", "/api/diagnostic"): self.diagnostic,
@@ -112,7 +115,7 @@ class AppState:
         phrase = self._need_pass()
         code = str(d.get("code", "")).strip()
         payload = new_payload(code)
-        warns = apply_fiche(payload, d.get("fiche", {}))
+        warns = apply_fiche(payload, d["fiche"]) if d.get("fiche") else []     # fiche facultative : complétée après l'import du FEC
         self.fecs.clear()
         self.detection = None
         self.store = mapping.TableStore.create(self.cfg.tables_root, code, phrase, payload)
@@ -151,10 +154,49 @@ class AppState:
         name = urllib.parse.unquote(headers.get("X-Filename", "") or "fec.txt")
         name = name.replace("\\", "/").rsplit("/", 1)[-1]
         fec = parse_fec(body, name)
-        rep = analyse(fec, self.cfg.priority_prefixes, s.payload["fiche"]["societe"]["siren"])
+        rep = analyse(fec, self.cfg.priority_prefixes, self.reference_siren())
         self.fecs[name] = (fec, rep)
         self.detection = None
         return rep
+
+    def detected_sirens(self) -> list[str]:
+        """SIREN lus dans les noms de fichiers FEC importés (norme A47 A-1 : SIRENFECAAAAMMJJ)."""
+        found = []
+        for _, rep in self.fecs.values():
+            sn = rep.get("siren_nom_fichier")
+            if sn and sn not in found:
+                found.append(sn)
+        return found
+
+    def reference_siren(self) -> str:
+        """SIREN du dossier : celui de la fiche s'il est renseigné, sinon celui du premier FEC importé."""
+        fiche = self._store().payload["fiche"]["societe"]["siren"]
+        if fiche:
+            return fiche
+        det = self.detected_sirens()
+        return det[0] if det else ""
+
+    def societe_state(self) -> dict[str, Any]:
+        s = self._store()
+        soc = s.payload["fiche"]["societe"]
+        det = self.detected_sirens()
+        siren = soc["siren"] or (det[0] if det else "")
+        return {"raison_sociale": soc["raison_sociale"], "sigle": soc["sigle"], "nom_commercial": soc["nom_commercial"],
+                "variantes": soc["variantes"], "siren": siren, "siren_detecte": bool(det) and not soc["siren"],
+                "siren_valide": bool(siren) and len(siren) == 9 and luhn_ok(siren),
+                "pseudo": next((e["pseudo"] for e in s.payload["entities"] if e["cat"] == "SOC"), None)}
+
+    def save_societe(self, d: dict[str, Any]) -> dict[str, Any]:
+        s = self._store()
+        warns = set_societe(s.payload, {
+            "raison_sociale": str(d.get("raison_sociale", "")), "sigle": str(d.get("sigle", "")),
+            "nom_commercial": str(d.get("nom_commercial", "")), "variantes": d.get("variantes", []),
+            "siren": str(d.get("siren", ""))})
+        s.save(int(self.cfg.get("versions_keep") or 50))
+        self.detection = None
+        soc = next((e for e in s.payload["entities"] if e["cat"] == "SOC" and not e.get("retired")), None)
+        return {**self.societe_state(), "warnings": warns,
+                "entity": {k: soc[k] for k in ("uid", "nom", "variantes")} if soc else None}
 
     def list_fecs(self) -> dict[str, Any]:
         return {"fecs": [rep for _, rep in self.fecs.values()]}
@@ -172,9 +214,9 @@ class AppState:
         if any(rep["bloquant"] for _, rep in self.fecs.values()):
             raise PseudoFecError("Un FEC présente des erreurs bloquantes : corrigez-les avant la détection.")
         res = detect([f for f, _ in self.fecs.values()], s.payload, self.cfg.priority_prefixes,
-                     Whitelist(self.cfg.cabinet.get("whitelist", [])))
+                     Whitelist(self.cfg.cabinet.get("whitelist", [])), frozenset(self.detected_sirens()))
         self.detection = res.as_dict()
-        return {**self.detection, "conflits_table": entity_conflicts(s.payload)}
+        return {**self.detection, "conflits_table": entity_conflicts(s.payload), "societe": self.societe_state()}
 
     def save_entities(self, d: dict[str, Any]) -> dict[str, Any]:
         s = self._store()
@@ -215,8 +257,7 @@ class AppState:
         while f"DEMO-{n:03d}" in existing:
             n += 1
         code = f"DEMO-{n:03d}"
-        payload = new_payload(code)
-        apply_fiche(payload, DEMO_FICHE)
+        payload = new_payload(code)                     # comme en usage réel : aucune saisie préalable
         self.store = mapping.TableStore.create(self.cfg.tables_root, code, phrase, payload)
         self.fecs.clear()
         self.detection = None
@@ -224,7 +265,7 @@ class AppState:
             s = make_fec(style, DEMO_STYLES[style][0], year=year, n_entries=120)
             name = f"DEMO-{style}-{s.filename}"
             fec = parse_fec(s.data, name)
-            self.fecs[name] = (fec, analyse(fec, self.cfg.priority_prefixes, payload["fiche"]["societe"]["siren"]))
+            self.fecs[name] = (fec, analyse(fec, self.cfg.priority_prefixes, self.reference_siren()))
         return {**self.state(), "code": code}
 
     def open_folder(self, d: dict[str, Any]) -> dict[str, Any]:

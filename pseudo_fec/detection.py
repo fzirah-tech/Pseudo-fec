@@ -327,7 +327,7 @@ class DetectionResult:
 
 
 def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict[str, list[str]],
-           whitelist: Whitelist) -> DetectionResult:
+           whitelist: Whitelist, extra_sirens: frozenset[str] = frozenset()) -> DetectionResult:
     tier_prefixes = {p for lst in priority_prefixes.values() for p in lst}
     hv = merge_harvests([harvest(f, tier_prefixes) for f in fecs])
     cands: dict[str, Candidate] = {}
@@ -418,7 +418,7 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             c.var_risk.add(text)          # un seul mot partagé avec un autre tiers : homonymie possible
 
     matcher = NameMatcher((v, k) for k, c in cands.items() for v in {c.nom, *c.variants})
-    sirens_all = frozenset(i[:9] for e in payload.get("entities", []) if e["cat"] == "SOC" for i in e.get("ids", []) if len(i) >= 9)
+    sirens_all = extra_sirens | frozenset(i[:9] for e in payload.get("entities", []) if e["cat"] == "SOC" for i in e.get("ids", []) if len(i) >= 9)
     covered_by_lib: dict[str, list[tuple[int, int]]] = {}
     payroll_libs: set[str] = set()
     for lib, e in hv.libs.items():
@@ -510,8 +510,9 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
     for toks, keys in full.conflicts.items():
         conflits.append({"texte": " ".join(toks), "entites": [cands[k].nom for k in keys if k in cands]})
 
-    sens, incr = _sensitive_and_incrustations(hv, payload, cands)
-    stats = {"lignes": hv.n_lines, "libelles_distincts": len(hv.libs), "candidats": len(cands)}
+    sens, incr = _sensitive_and_incrustations(hv, payload, cands, extra_sirens)
+    stats = {"lignes": hv.n_lines, "libelles_distincts": len(hv.libs), "candidats": len(cands),
+             "societe_suggestions": _societe_suggestions(cands)}
     order = {"aux": 0, "compte": 1, "fiche": 2, "table": 2, "manuel": 2, "libelle": 3}
     lst = sorted(cands.values(), key=lambda c: (c.statut == "liste_blanche", order.get(c.source, 4), -c.occurrences))
     return DetectionResult(lst, sens, incr, conflits, stats)
@@ -631,9 +632,21 @@ def _note_overlaps(cands: list[Candidate]) -> None:
 
 # ------------------------------------------------------------------ motifs sensibles, incrustations
 
-def _sensitive_and_incrustations(hv: Harvest, payload: dict[str, Any],
-                                 cands: dict[str, Candidate]) -> tuple[dict[str, Any], dict[str, Any]]:
-    sirens = frozenset(i for e in payload.get("entities", []) if e["cat"] == "SOC" for i in e.get("ids", []) if len(i) == 9)
+def _societe_suggestions(cands: dict[str, Candidate]) -> list[dict[str, Any]]:
+    """Raisons sociales possibles de l'entité : noms à forme juridique cités dans les libellés d'écritures
+    (refacturations, virements internes…) et non rattachés à un tiers connu. Simple aide à la saisie."""
+    out = []
+    for c in cands.values():
+        if c.statut == "connu" or c.source != "libelle":
+            continue
+        if any(t in LEGAL_FORMS for t in tokens(c.nom)):
+            out.append({"nom": c.nom, "occurrences": c.occurrences})
+    return sorted(out, key=lambda x: -x["occurrences"])[:6]
+
+
+def _sensitive_and_incrustations(hv: Harvest, payload: dict[str, Any], cands: dict[str, Candidate],
+                                 extra_sirens: frozenset[str] = frozenset()) -> tuple[dict[str, Any], dict[str, Any]]:
+    sirens = extra_sirens | frozenset(i for e in payload.get("entities", []) if e["cat"] == "SOC" for i in e.get("ids", []) if len(i) == 9)
     sirens |= frozenset(i[:9] for e in payload.get("entities", []) if e["cat"] == "SOC" for i in e.get("ids", []) if len(i) == 14)
     counts: Counter = Counter()
     champs: dict[str, Counter] = defaultdict(Counter)
@@ -657,5 +670,5 @@ def _sensitive_and_incrustations(hv: Harvest, payload: dict[str, Any],
         "siren_entite": any(h for k in counts if k in ("SIREN", "SIRET"))}
     incr = {"CompAuxNum": incr_aux, "CompteNum": len(hv.alpha_comptes),
             "message": ("Des numéros de compte contiennent du texte lié à un nom : ils seront remplacés par un code "
-                        "neutre cohérent lors de la pseudonymisation (jalon c).") if incr_aux or hv.alpha_comptes else ""}
+                        "neutre cohérent lors de la pseudonymisation.") if incr_aux or hv.alpha_comptes else ""}
     return sens, incr

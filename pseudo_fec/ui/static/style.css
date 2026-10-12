@@ -59,3 +59,4 @@ details summary{cursor:pointer;color:var(--navy);font-size:13px}
 .top-actions button.on{background:var(--navy);color:var(--navy-ink)}
 ol{padding-left:20px}
 .item{gap:14px}.item .actions{margin-top:0;flex-wrap:nowrap;flex-shrink:0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}

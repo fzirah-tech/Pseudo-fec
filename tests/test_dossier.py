@@ -52,9 +52,17 @@ def test_enrichissement_stable_et_sans_reutilisation():
     assert next(e for e in p["entities"] if e["nom"] == "Nouvel Associé")["pseudo"] == "ASS-0003"
 
 
-def test_raison_sociale_obligatoire():
-    with pytest.raises(DossierError):
-        dossier.apply_fiche(dossier.new_payload("D-001"), {"societe": {}, "personnes": [], "liees": []})
+def test_fiche_facultative_et_societe_renseignee_apres_import():
+    p = dossier.new_payload("D-001")
+    assert dossier.apply_fiche(p, {"societe": {}, "personnes": [], "liees": []}) == []     # aucune saisie préalable
+    assert p["entities"] == []
+    dossier.apply_validation(p, [{"nom": "Karim BENALI", "cat": "SAL", "checked": True, "source": "compte", "variantes": []}])
+    dossier.set_societe(p, {"raison_sociale": "ATELIERS DU PORT SAS", "siren": "732 829 320", "sigle": "ADP"})
+    soc = next(e for e in p["entities"] if e["cat"] == "SOC")
+    assert soc["pseudo"] == "SOC-0001" and "732829320" in soc["ids"] and "ADP" in soc["variantes"]
+    assert next(e for e in p["entities"] if e["nom"] == "Karim BENALI")["pseudo"] == "SAL-0001"   # le reste est conservé
+    dossier.set_societe(p, {"sigle": "ATP"})                                                       # mise à jour partielle
+    assert next(e for e in p["entities"] if e["cat"] == "SOC")["uid"] == soc["uid"] and "ATP" in soc["variantes"]
 
 
 def test_avertissement_siren_invalide():

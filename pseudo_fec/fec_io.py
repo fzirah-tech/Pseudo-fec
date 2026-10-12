@@ -354,12 +354,12 @@ def analyse(fec: FecFile, class_prefixes: dict[str, list[str]],
     if not siren:
         siren_check = "nom de fichier hors norme (SIRENFECAAAAMMJJ) : non vérifiable"
     elif not fiche_siren:
-        siren_check = "SIREN de la fiche dossier non renseigné : non vérifiable"
+        siren_check = "SIREN lu dans le nom du fichier : à confirmer à l'étape « Noms à valider »"
     elif siren == fiche_siren:
         siren_check = "concordant"
     else:
         siren_check = "DIFFÉRENT"
-        issues.append(Issue("erreur", "SIREN_DIFFERENT", "Le SIREN du nom de fichier diffère de celui de la fiche dossier."))
+        issues.append(Issue("erreur", "SIREN_DIFFERENT", "Le SIREN du nom de fichier diffère de celui du dossier (fiche ou autres FEC déjà importés)."))
 
     classes = {}
     for cls, st in cls_stats.items():

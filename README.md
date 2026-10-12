@@ -3,7 +3,7 @@
 Outil **local et hors ligne** de cabinet : pseudonymise les FEC avant analyse dans Claude, puis
 ré-identifie les restitutions. Interface HTML servie sur `127.0.0.1` par l'application elle-même.
 
-**État : jalon (b)** — socle, fiche dossier, import et contrôle du FEC, détection et validation des noms.
+**État : jalon (b)** — import et contrôle du FEC, puis détection et validation des noms (aucune saisie préalable).
 Prochains jalons : (c) pseudonymisation du FEC, (d) texte libre,
 (e–g) ré-identification DOCX/XLSX/PPTX, (h) verrouillage et audit, (i) packaging Windows.
 
@@ -48,6 +48,15 @@ Les tests n'utilisent que des données synthétiques (`tests/synth.py`) ; ne jam
 - Tables : AES-256-GCM, clé de données par dossier enveloppée par scrypt (n = 2^17) ; plusieurs phrases
   possibles (secours, changement sans rechiffrement) ; une table ne peut pas être transposée dans un autre dossier.
 - Messages d'erreur sans aucune donnée issue des fichiers.
+
+## Parcours : le FEC d'abord, les propositions ensuite
+
+1. **Nouveau dossier** : un simple code neutre (aucun nom de client).
+2. **Import du FEC** (un par exercice) : contrôles d'intégrité ; le SIREN est lu dans le nom du fichier (norme A47 A-1) et
+   sert de référence : un exercice portant un autre SIREN est refusé.
+3. **Noms à valider** : l'outil propose la société (raison sociale suggérée à partir des libellés, SIREN prérempli),
+   ses dirigeants et associés, ses sociétés liées, ses clients, fournisseurs et salariés ; l'utilisateur valide.
+   La fiche société reste disponible, **facultative**, pour ajouter à l'avance ce que le FEC ne révèle pas.
 
 ## Détection des noms (jalon b)
 

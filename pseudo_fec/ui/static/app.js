@@ -35,9 +35,8 @@ const fmtI = (n) => Number(n).toLocaleString("fr-FR");
 
 // ------------------------------------------------------------------ navigation
 const STEPS = [
-  ["home", "1 · Accueil"], ["fiche", "2 · Fiche dossier"], ["fec", "3 · Import du FEC"],
-  ["noms", "4 · Noms à valider"], ["pseudo", "5 · Pseudonymisation"],
-  ["texte", "6 · Texte libre"], ["reid", "7 · Ré-identification"],
+  ["home", "1 · Accueil"], ["fec", "2 · Import du FEC"], ["noms", "3 · Noms à valider"],
+  ["pseudo", "4 · Pseudonymisation"], ["texte", "5 · Texte libre"], ["reid", "6 · Ré-identification"],
 ];
 const AVAILABLE = new Set(["home", "fiche", "fec", "noms"]);
 
@@ -65,7 +64,7 @@ async function render() {
   try {
     if (S.view === "aide") return await renderAide();
     if (!S.state.unlocked) return renderLogin();
-    if (S.view === "fiche" && S.dossier) return renderFiche();   // y compris un nouveau dossier pas encore créé
+    if (S.view === "fiche" && S.state.dossier) { S.dossier = await api("GET", "/api/dossier"); return renderFiche(); }
     if (S.view === "home" || !S.state.dossier) { S.view = "home"; renderSteps(); return await renderHome(); }
     if (S.view === "fec") return await renderFec();
     if (S.view === "noms") return await renderNoms();
@@ -106,7 +105,7 @@ async function renderHome() {
   const code = h("input", { id: "code", placeholder: "ex. D2025-017 (code neutre, sans nom de client)", maxlength: 32 });
   const box = h("div");
   const open = async (c) => {
-    try { S.dossier = await api("POST", "/api/dossier/open", { code: c }); await refresh(); await go("fec"); }
+    try { S.dossier = await api("POST", "/api/dossier/open", { code: c }); S.det = null; S.rows = null; await refresh(); await go("fec"); }
     catch (e) { box.replaceChildren(msg("err", e.message)); }
   };
   main.append(
@@ -120,10 +119,12 @@ async function renderHome() {
     h("div", { class: "card" },
       h("label", { for: "code" }, "Code dossier"), code,
       h("p", { class: "muted" }, "Ce code sert de nom de dossier et figure dans les fichiers produits : n'y mettez pas le nom du client."),
-      h("div", { class: "actions" }, h("button", { onclick: () => {
-        S.dossier = { code: code.value.trim(), fiche: emptyFiche(), entities: [], isNew: true };
-        S.view = "fiche"; render();
-      } }, "Créer la fiche dossier"))));
+      h("p", { class: "muted" }, "Aucune autre saisie : vous importez d'abord le FEC, puis l'outil vous propose la société, ses dirigeants et associés, ses sociétés liées et ses tiers, que vous validez."),
+      h("div", { class: "actions" }, h("button", { onclick: async () => {
+        box.replaceChildren();
+        try { S.dossier = await api("POST", "/api/dossier/create", { code: code.value.trim() }); S.det = null; S.rows = null; await refresh(); await go("fec"); }
+        catch (e) { box.replaceChildren(msg("err", e.message)); }
+      } }, "Créer le dossier et importer le FEC"))));
 }
 
 const emptyFiche = () => ({ societe: { raison_sociale: "", nom_commercial: "", sigle: "", variantes: [], siren: "", sirets: [] }, personnes: [], liees: [] });
@@ -165,19 +166,19 @@ function renderFiche() {
   const save = async () => {
     box.replaceChildren();
     try {
-      const path = d.isNew ? "/api/dossier/create" : "/api/dossier/fiche";
+      const path = "/api/dossier/fiche";
       S.dossier = await api("POST", path, { code: d.code, fiche: f });
       await refresh();
       if (S.dossier.warnings && S.dossier.warnings.length) {
         box.append(...S.dossier.warnings.map((w) => msg("warn", w)));
-      } else { await go("fec"); return; }
+      } else { S.det = null; S.rows = null; await go("noms"); return; }
       renderSteps();
     } catch (e) { box.append(msg("err", e.message)); }
   };
 
   main.append(
-    h("h1", {}, "Fiche dossier"),
-    h("p", { class: "muted" }, "Ces noms seront automatiquement cochés « à pseudonymiser » et recherchés dans tous les champs texte du FEC. Ils ne sont stockés que dans la table chiffrée."),
+    h("h1", {}, "Fiche société (facultatif)"),
+    h("p", { class: "muted" }, "Inutile en général : l'outil propose ces noms à partir du FEC. Utilisez cette page pour ajouter à l'avance des dirigeants, associés ou sociétés liées que le FEC ne révèle pas. Ils sont stockés dans la table chiffrée uniquement."),
     h("h2", {}, "Société (pseudonyme SOC-0001)"),
     h("div", { class: "card" },
       h("div", { class: "row" },
@@ -196,8 +197,8 @@ function renderFiche() {
       h("button", { class: "ghost small", onclick: () => { f.liees.push({ raison_sociale: "", lien: "autre", variantes: [], siren: "", sirets: [] }); drawLiees(); } }, "+ Ajouter une société liée")),
     box,
     h("div", { class: "actions" },
-      h("button", { onclick: save }, d.isNew ? "Créer le dossier" : "Enregistrer la fiche"),
-      h("button", { class: "ghost", onclick: () => go("home") }, "Retour")));
+      h("button", { onclick: save }, "Enregistrer la fiche"),
+      h("button", { class: "ghost", onclick: () => go(S.state.dossier ? "noms" : "home") }, "Retour")));
 }
 
 // ------------------------------------------------------------------ import FEC
@@ -223,7 +224,7 @@ async function renderFec() {
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => send([...e.dataTransfer.files]));
 
-  const next = h("button", { onclick: () => go("noms") }, "Passer à la détection des noms");
+  const next = h("button", { onclick: () => go("noms") }, "Détecter et proposer les noms");
   function draw() {
     list.replaceChildren(...S.fecs.map(card));
     next.disabled = !S.fecs.length || S.fecs.some((r) => r.bloquant);
@@ -377,6 +378,7 @@ async function renderNoms() {
     const dr = S.det;
     const manNom = h("input", { placeholder: "Nom à ajouter (ex. Jean DUPONT)" }), manCat = h("select", {}, ...CAT_ORDER.filter((c) => c !== "SOC").map((c) => h("option", { value: c }, c + " · " + S.state.categories[c])));
     put(body,
+      societeCard(dr),
       dr.conflits.length > 0 && h("div", { class: "msg err" }, h("strong", {}, "Conflits à résoudre avant pseudonymisation : "), "un même texte est rattaché à deux entités — ",
         dr.conflits.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; "), ". Décochez une variante ou fusionnez les entités."),
       dr.sensibles.total > 0 && h("div", { class: "card" }, h("strong", {}, "Motifs sensibles détectés (remplacés par des jetons neutres, non réversibles) : "),
@@ -411,6 +413,45 @@ async function renderNoms() {
     for (const r of sel) { try { await api("POST", "/api/whitelist/add", { nom: r.nom }); r.statut = "liste_blanche"; r.checked = false; r.touched = true; r.sel = false; } catch (e) { box.append(msg("err", e.message)); } }
     draw();
   }
+  function societeCard(dr) {
+    const so = dr.societe, sug = (dr.stats && dr.stats.societe_suggestions) || [], out = h("div");
+    const rs = h("input", { value: so.raison_sociale, placeholder: "Raison sociale exacte", id: "soc-rs" });
+    const sg = h("input", { value: so.sigle || "", placeholder: "Sigle (facultatif)" });
+    const sn = h("input", { value: so.siren || "", placeholder: "9 chiffres", inputmode: "numeric", maxlength: 14, id: "soc-siren" });
+    const va = h("textarea", { placeholder: "Autres écritures du nom, une par ligne (facultatif)" }); va.value = (so.variantes || []).join("\n");
+    const validate = async () => {
+      out.replaceChildren();
+      try {
+        const r = await api("POST", "/api/societe/save", { raison_sociale: rs.value, sigle: sg.value, siren: sn.value, variantes: va.value.split("\n") });
+        dr.societe = r; r.warnings.forEach((w) => out.append(msg("warn", w)));
+        if (r.entity) {   // la société remplace la proposition de même nom, sans perdre les autres choix en cours
+          S.rows = S.rows.filter((x) => x.cat !== "SOC" && x.nom.toLowerCase() !== r.entity.nom.toLowerCase());
+          S.rows.unshift(newRow({ key: r.entity.nom.toLowerCase(), uid: r.entity.uid, nom: r.entity.nom, cat: "SOC", checked: true, source: "fiche", confiance: "haute",
+            statut: "connu", liste_blanche: null, pseudo: r.pseudo, variantes: (r.entity.variantes || []).map((t) => ({ texte: t, n: 0, origine: "fiche", risque: false, coche: true })),
+            champs: {}, comptes: [], nb_comptes: 0, exemples: [], occurrences: 0, notes: [], merge_with: [] }));
+        }
+        draw();
+      } catch (e) { out.append(msg("err", e.message)); }
+    };
+    const form = h("div", {},
+      h("label", { for: "soc-rs" }, "Raison sociale de la société dont vous importez la comptabilité"), rs,
+      sug.length > 0 && h("div", { class: "chips" }, h("span", { class: "muted" }, "Propositions tirées des libellés : "),
+        sug.map((x) => h("button", { class: "ghost small", onclick: () => { rs.value = x.nom; } }, x.nom + " (" + x.occurrences + ")"))),
+      h("div", { class: "row" },
+        h("div", {}, h("label", { for: "soc-siren" }, "SIREN"), sn,
+          so.siren_detecte && h("div", { class: "muted" }, "Lu dans le nom du fichier FEC : vérifiez-le."),
+          so.siren && !so.siren_valide && msg("warn", "SIREN invalide (9 chiffres, clé de contrôle)")),
+        h("div", {}, h("label", {}, "Sigle"), sg)),
+      h("details", {}, h("summary", {}, "Autres écritures du nom"), va),
+      out, h("div", { class: "actions" }, h("button", { onclick: validate }, "Valider la société")));
+    if (so.pseudo) {
+      const d = h("details", {}, h("summary", {}, "Modifier"), form);
+      return h("div", { class: "card" }, h("strong", {}, "✓ Société : " + so.raison_sociale + " "), h("span", { class: "pill ok" }, so.pseudo),
+        so.siren && h("span", { class: "muted" }, " · SIREN " + so.siren + " (remplacé par " + so.pseudo + ")"), d);
+    }
+    return h("div", { class: "card" }, msg("warn", "La société n'est pas encore identifiée : son nom restera visible dans les libellés tant que vous ne l'avez pas validée."), form);
+  }
+
   async function save() {
     const rows = S.rows.filter((r) => r.checked || r.touched || ["aux", "compte", "fiche", "table", "manuel"].includes(r.source)).map((r) => ({
       uid: r.uid, nom: r.nom, cat: r.cat, checked: r.checked, source: r.source, touched: r.touched,
@@ -433,7 +474,8 @@ async function renderNoms() {
   }
 
   main.append(h("h1", {}, "Noms à valider"),
-    h("p", { class: "muted" }, "Propositions de pseudonymisation issues du FEC et de la fiche dossier. Les propositions heuristiques tirées des libellés sont indicatives : vérifiez-les. Les tiers usuels (liste blanche) sont maintenus sauf si vous les cochez."),
+    h("p", { class: "muted" }, "À partir du FEC importé, l'outil propose la société, ses dirigeants et associés, ses sociétés liées, ses clients, fournisseurs et salariés. Vous validez : cochez ce qui doit être pseudonymisé, corrigez la catégorie, fusionnez les variantes. Les propositions tirées des libellés sont indicatives. Les tiers usuels (liste blanche) sont maintenus sauf si vous les cochez."),
+    h("p", { class: "muted" }, "Un dirigeant, un associé ou une société liée que le FEC ne révèle pas ? ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); go("fiche"); } }, "Ajoutez-les à l'avance"), " ou utilisez « Ajout manuel » en bas de page."),
     box, body);
   if (S.det && S.rows) draw(); else await detect();
 }
@@ -457,7 +499,7 @@ async function renderAide() {
     box.replaceChildren();
     if (!S.state.unlocked) { S.view = "home"; await render(); main.prepend(msg("warn", "Saisissez d'abord la phrase secrète, puis relancez la démonstration depuis « Aide et test ».")); return; }
     box.append(h("p", { class: "muted" }, "Création du dossier de démonstration… (quelques secondes)"));
-    try { await api("POST", "/api/demo/create", { style }); S.dossier = null; S.det = null; await refresh(); S.view = "fec"; await render(); }
+    try { await api("POST", "/api/demo/create", { style }); S.dossier = null; S.det = null; S.rows = null; await refresh(); S.view = "fec"; await render(); }
     catch (e) { box.append(msg("err", e.message)); }
   }
   async function runDiag() {
@@ -481,7 +523,7 @@ async function renderAide() {
     box,
     h("h2", {}, "1 · Essayer avec des données fictives"),
     h("div", { class: "card" },
-      h("p", {}, "Crée un dossier « DEMO-nnn » avec deux exercices fictifs déjà importés, puis vous emmène à l'étape 3. Vous pouvez enchaîner : détection des noms, regroupements, enregistrement des décisions."),
+      h("p", {}, "Crée un dossier « DEMO-nnn » avec deux exercices fictifs déjà importés, sans aucune saisie préalable, puis vous emmène à l'étape 2. Vous pouvez enchaîner : détection des noms, regroupements, enregistrement des décisions."),
       h("div", { class: "list" }, DEMOS.map(([k, t, d]) => h("div", { class: "item" }, h("div", {}, h("strong", {}, t), h("div", { class: "muted" }, d)),
         h("div", { class: "actions" }, h("button", { class: "small", onclick: () => demo(k) }, "Lancer la démo"),
           h("button", { class: "ghost small", onclick: () => download("/api/demo/fec?style=" + k + "&year=2024", "DEMO-FEC.txt").catch((e) => box.append(msg("err", e.message))) }, "Télécharger le FEC fictif"))))),
@@ -496,9 +538,8 @@ async function renderAide() {
       h("p", { class: "muted" }, "Les tables contiennent les vrais noms (chiffrés) : ne les copiez pas dans le même dossier que les fichiers destinés à Claude.")),
     h("h2", {}, "4 · Parcours à tester"),
     h("div", { class: "card" }, h("ol", {},
-      h("li", {}, "Fiche dossier : saisir la société, les dirigeants et les sociétés liées (ou utiliser une démo)."),
-      h("li", {}, "Import du FEC : contrôles d'intégrité, détection du format et des dates."),
-      h("li", {}, "Noms à valider : regroupements proposés, conflits, tiers usuels maintenus, ajout manuel."),
+      h("li", {}, "Import du FEC (ou démo) : contrôles d'intégrité, détection du format et des dates. Aucune saisie préalable."),
+      h("li", {}, "Noms à valider : identifier la société (proposée à partir du FEC), puis valider dirigeants, associés, sociétés liées et tiers ; regroupements proposés, conflits, tiers usuels maintenus."),
       h("li", {}, "Fermer puis rouvrir l'application : le dossier et ses décisions doivent être retrouvés (phrase secrète demandée)."))),
     h("p", { class: "muted" }, "À venir : pseudonymisation du FEC, texte libre, ré-identification des restitutions."));
 }

@@ -94,9 +94,7 @@ def normalize_fiche(raw: dict[str, Any]) -> dict[str, Any]:
 
 def validate_fiche(f: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Retourne (erreurs bloquantes, avertissements)."""
-    errors, warns = [], []
-    if not f["societe"]["raison_sociale"]:
-        errors.append("La raison sociale de la société est obligatoire.")
+    errors, warns = [], []      # la fiche est facultative : l'outil la complète à partir des propositions
 
     def chk(label: str, siren: str, sirets: list[str]) -> None:
         if siren and (len(siren) != 9 or not luhn_ok(siren)):
@@ -137,8 +135,9 @@ def sync_entities(payload: dict[str, Any]) -> None:
 
     s = fiche["societe"]
     names = [s["nom_commercial"], s["sigle"], *s["variantes"]]
-    upsert("soc", "SOC", s["raison_sociale"], _clean_list([n for n in names if n]),
-           [x for x in [s["siren"], *s["sirets"]] if x])
+    if s["raison_sociale"] or "soc" in by_uid:
+        upsert("soc", "SOC", s["raison_sociale"] or by_uid["soc"]["nom"], _clean_list([n for n in names if n]),
+               [x for x in [s["siren"], *s["sirets"]] if x])
     for c in fiche["liees"]:
         upsert(c["uid"], "GRP", c["raison_sociale"], c["variantes"],
                [x for x in [c["siren"], *c["sirets"]] if x], {"lien": c["lien"]})
@@ -148,6 +147,12 @@ def sync_entities(payload: dict[str, Any]) -> None:
     for e in payload["entities"]:
         if e["source"] == "fiche" and e["uid"] not in current:
             e["retired"] = True  # conservé : les anciennes sorties restent ré-identifiables
+
+
+def set_societe(payload: dict[str, Any], societe: dict[str, Any]) -> list[str]:
+    """Renseigne l'identité de la société (après import du FEC) sans toucher aux autres éléments de la fiche."""
+    fiche = {**payload["fiche"], "societe": {**payload["fiche"]["societe"], **{k: v for k, v in societe.items() if v is not None}}}
+    return apply_fiche(payload, fiche)
 
 
 def apply_fiche(payload: dict[str, Any], raw: dict[str, Any]) -> list[str]:

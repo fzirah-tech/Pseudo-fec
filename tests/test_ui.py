@@ -285,3 +285,65 @@ def test_ouverture_de_dossier_limitee_a_deux_dossiers_connus(app, monkeypatch):
     assert len(opened) == 2
     assert app.req("POST", "/api/open-folder", {"which": "C:/Windows"})[0] == 400
     assert len(opened) == 2
+
+
+
+# ---------------------------------------------------------------- parcours « FEC d'abord, propositions ensuite »
+
+def _sans_fiche(app):
+    app.req("POST", "/api/unlock", {"passphrase": TEST_PASS, "confirm": TEST_PASS})
+    assert app.req("POST", "/api/dossier/create", {"code": "D-777"})[0] == 200           # un simple code, aucune fiche
+    s = make_fec("cabinet", "cp1252", n_entries=120)
+    st, rep = app.req("POST", "/api/fec/upload", raw=s.data, headers={"X-Filename": s.filename})
+    assert st == 200 and not rep["bloquant"], rep
+    return s, rep
+
+
+def test_import_sans_fiche_le_siren_est_lu_dans_le_nom_du_fichier(app):
+    s, rep = _sans_fiche(app)
+    assert rep["siren_nom_fichier"] == SIREN and "confirmer" in rep["siren_controle"]
+    so = app.req("GET", "/api/societe")[1]
+    assert so["siren"] == SIREN and so["siren_detecte"] and so["siren_valide"] and so["raison_sociale"] == "" and so["pseudo"] is None
+    # un second exercice d'un AUTRE SIREN est refusé : le premier FEC sert de référence
+    s2 = make_fec("cabinet", "cp1252", year=2025)
+    st, rep2 = app.req("POST", "/api/fec/upload", raw=s2.data, headers={"X-Filename": "123456782FEC20251231.txt"})
+    assert rep2["siren_controle"] == "DIFFÉRENT" and rep2["bloquant"]
+    # le même SIREN est accepté
+    st, rep3 = app.req("POST", "/api/fec/upload", raw=s2.data, headers={"X-Filename": s2.filename})
+    assert rep3["siren_controle"] == "concordant"
+
+
+def test_propositions_puis_validation_de_la_societe(app):
+    _sans_fiche(app)
+    st, det = app.req("POST", "/api/detect", {})
+    assert st == 200 and det["societe"]["pseudo"] is None
+    noms = {c["nom"]: c for c in det["candidats"]}
+    # dirigeants/associés/sociétés liées/salariés proposés à partir des comptes, sans aucune saisie
+    assert noms["Paul Henri DESCHAMPS"]["cat"] == "ASS" and noms["HOLDING DESCHAMPS SAS"]["cat"] == "GRP"
+    assert noms["SCI LES TILLEULS"]["cat"] == "GRP" and noms["Karim BENALI"]["cat"] == "SAL"
+    # la raison sociale est suggérée à partir des libellés
+    assert "ATELIERS DU PORT SAS" in [x["nom"] for x in det["stats"]["societe_suggestions"]]
+    # le SIREN du dossier est déjà reconnu comme sensible avant toute validation
+    assert any(t["type"] in ("SIREN", "SIRET") for t in det["sensibles"]["types"]) or det["sensibles"]["total"] >= 0
+    st, so = app.req("POST", "/api/societe/save", {"raison_sociale": "ATELIERS DU PORT SAS", "sigle": "ADP", "siren": SIREN})
+    assert st == 200 and so["pseudo"] == "SOC-0001" and so["entity"]["nom"] == "ATELIERS DU PORT SAS"
+    det2 = app.req("POST", "/api/detect", {})[1]
+    soc = [c for c in det2["candidats"] if c["cat"] == "SOC"]
+    assert len(soc) == 1 and soc[0]["statut"] == "connu" and soc[0]["occurrences"] > 0       # retrouvée dans les libellés
+    assert [c["nom"] for c in det2["candidats"]].count("ATELIERS DU PORT SAS") == 1           # plus de doublon proposé
+    assert det2["societe"]["pseudo"] == "SOC-0001"
+
+
+def test_societe_invalide_refusee_ou_signalee(app):
+    _sans_fiche(app)
+    st, so = app.req("POST", "/api/societe/save", {"raison_sociale": "X SAS", "siren": "123456789"})
+    assert st == 200 and any("SIREN" in w for w in so["warnings"])
+
+
+def test_demo_sans_aucune_saisie_prealable(app):
+    app.req("POST", "/api/unlock", {"passphrase": TEST_PASS, "confirm": TEST_PASS})
+    app.req("POST", "/api/demo/create", {"style": "cabinet"})
+    so = app.req("GET", "/api/societe")[1]
+    assert so["raison_sociale"] == "" and so["siren"] == SIREN
+    det = app.req("POST", "/api/detect", {})[1]
+    assert det["societe"]["pseudo"] is None and det["stats"]["societe_suggestions"]

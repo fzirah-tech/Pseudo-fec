@@ -19,8 +19,9 @@ def test_parcours_navigateur(cfg, tmp_path):
         pytest.skip("Chromium introuvable")
     srv = PseudoFecServer(cfg)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    f = tmp_path / "fec.txt"
-    f.write_bytes(make_fec("cabinet", "cp1252").data)
+    synth = make_fec("cabinet", "cp1252", n_entries=120)
+    f = tmp_path / synth.filename                                 # nom conforme : SIRENFECAAAAMMJJ.txt
+    f.write_bytes(synth.data)
     erreurs = []
     try:
         with pw.sync_playwright() as p:
@@ -30,17 +31,20 @@ def test_parcours_navigateur(cfg, tmp_path):
             pg.on("console", lambda m: m.type == "error" and erreurs.append(m.text))
             pg.goto(srv.url)
             pg.fill("#pp", TEST_PASS); pg.fill("#pp2", TEST_PASS); pg.click("text=Déverrouiller")
-            pg.fill("#code", "D2025-001"); pg.click("text=Créer la fiche dossier")
-            pg.wait_for_selector("h1:has-text('Fiche dossier')")      # régression : renvoyait à l'accueil
-            pg.locator("input").nth(0).fill("ATELIERS DU PORT SAS")
-            pg.click("text=Créer le dossier")
+            pg.fill("#code", "D2025-001"); pg.click("text=Créer le dossier et importer le FEC")   # aucune fiche à saisir
             pg.wait_for_selector("h1:has-text('Import et contrôle')")
             pg.set_input_files("input[type=file]", [str(f)])
             pg.wait_for_selector("text=Contrôles passés", timeout=20000)
-            # jalon (b) : détection des noms, fusion proposée, enregistrement
-            pg.click("text=Passer à la détection des noms")
+            pg.click("text=Détecter et proposer les noms")
             pg.wait_for_selector(".nrow", timeout=20000)
             assert pg.locator(".nrow").count() >= 8
+            pw.expect(pg.locator("text=La société n'est pas encore identifiée")).to_be_visible()
+            assert pg.locator("#soc-siren").input_value() == "732829320"                      # SIREN lu dans le nom du fichier
+            pg.locator(".chips button").first.click()                                          # proposition de raison sociale
+            assert pg.locator("#soc-rs").input_value() != ""
+            pg.click("text=Valider la société")
+            pw.expect(pg.locator("text=✓ Société")).to_be_visible()
+            assert "SOC-0001" in pg.locator("main").inner_text()
             assert "à pseudonymiser" in pg.locator("#stat").inner_text()
             assert "false" not in pg.locator("main").inner_text()
             pg.click("text=Appliquer tous les regroupements")
