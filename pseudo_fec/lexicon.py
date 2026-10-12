@@ -21,7 +21,7 @@ STOPWORDS = set("""
 fact facture factures fa fac avoir av vir virement virements prlv prelevement prelevements sepa cb carte cheque chq chèque
 remise remises rglt reglt reglement reglements paiement paiements pmt pay encaissement decaissement
 salaire salaires paie paye bulletin acompte avance net brut cotisation cotisations charge charges
-conges cp rtt indemnite indemnites frais note notes km deplacement mission
+conges cp rtt indemnite indemnites frais note notes ndf km deplacement mission
 tva ht ttc taux regul regularisation reprise report ouverture solde soldes cloture
 loyer loyers assurance assurances honoraires honoraire abonnement abonnements licence licences
 achat achats vente ventes prestation prestations marchandises matieres matiere fournitures fourniture

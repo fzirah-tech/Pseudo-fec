@@ -64,6 +64,20 @@ def derived_variants(texte: str) -> list[tuple[str, str]]:
             (t[1:], f"variante de « {t} » (première lettre omise)")]
 
 
+def expand_truncations(texte: str, min_total: int = 6) -> list[str]:
+    """Formes coupées en fin de zone (libellé tronqué par la taille du champ) : « DURAND CONSULTING » ->
+    « DURAND CONSULTIN », « DURAND CONSULT »… ; un mot seul est coupé tant qu'il reste `min_total` lettres."""
+    t = texte.strip()
+    m = list(TOKEN_RE.finditer(t))
+    if not m:
+        return []
+    last = m[-1]
+    start, word = last.start(), last.group()
+    multi = len(m) > 1
+    floor = max(3, min_total - start) if multi else min_total
+    return [t[:start] + word[:k] for k in range(len(word) - 1, floor - 1, -1) if k >= 2 and len(t[:start] + word[:k]) >= min_total]
+
+
 def is_person(nom: str, cat: str) -> bool:
     return (cat in ("SAL", "ASS") and not any(fold(t) in LEGAL_FORMS for t in TOKEN_RE.findall(nom))) \
         or (cat in ("TIE", "CLI", "FRN") and looks_like_person(nom))

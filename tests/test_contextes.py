@@ -279,3 +279,55 @@ def test_variantes_tronquees_pseudonymisees_et_salarie_en_467():
     txt = out.data.decode() if hasattr(out, "data") else str(out)
     for mot in ("DURAND", "DURAN ", "URAND", "TILLEULS", "LEFEBVRE"):
         assert mot not in txt, mot
+
+
+# ---------------------------------------------------------------- libellés tronqués, noms récurrents (paie, 467, 64)
+
+def _valide(res):
+    return [{"nom": c.nom, "cat": c.cat, "checked": True, "source": c.source, "touched": True, "variantes": [],
+             "parties": [{"texte": x["texte"], "portee": x["portee"], "actif": x["actif"]} for x in c.parties]}
+            for c in res.candidates if c.checked]
+
+
+def test_libelle_tronque_par_la_taille_du_champ_est_pseudonymise():
+    lines = [("OD", 1, "455000", "DURAND CONSULTING", "", "", "Refact DURAND CONSULTING", "10,00", "0,00"),
+             ("OD", 1, "512000", "Banque", "", "", "Refact DURAND CONSULTING", "0,00", "10,00"),
+             ("OD", 2, "512000", "Banque", "", "", "Virement DURAND CONSULTIN", "10,00", "0,00"),
+             ("OD", 2, "706000", "Ventes", "", "", "Virement DURAND CONSULTIN", "0,00", "10,00"),
+             ("OD", 3, "512000", "Banque", "", "", "Prlv DURAND CONSU", "10,00", "0,00"),
+             ("OD", 3, "706000", "Ventes", "", "", "Prlv DURAND CONSU", "0,00", "10,00"),
+             ("OD", 4, "512000", "Banque", "", "", "Frais TILLEUL ref", "5,00", "0,00"),
+             ("OD", 4, "706000", "Ventes", "", "", "Frais TILLEUL ref", "0,00", "5,00"),
+             ("OD", 5, "261000", "SCI LES TILLEULS", "", "", "Titres", "5,00", "0,00"),
+             ("OD", 5, "512000", "Banque", "", "", "Titres", "0,00", "5,00")]
+    fec, p = mini(lines), new_payload("D")
+    res = detect([fec], p, PREF, WL)
+    apply_validation(p, _valide(res))
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    for mot in ("CONSULTIN", "CONSU", "DURAND", "TILLEUL"):
+        assert mot not in txt, mot
+
+
+def test_nom_recurrent_en_paie_et_en_467_retenu_et_pseudonymise():
+    lines = []
+    for i in range(1, 4):
+        lines += [("OD", i, "421000", "Personnel - rémunérations dues", "", "", f"Paie ZEBRANSKY mois {i}", "10,00", "0,00"),
+                  ("OD", i, "512000", "Banque", "", "", f"Paie ZEBRANSKY mois {i}", "0,00", "10,00")]
+    for i in (4, 5):
+        lines += [("OD", i, "467000", "Divers", "", "", f"NDF OLIVEIRA taxi {i}", "10,00", "0,00"),
+                  ("OD", i, "512000", "Banque", "", "", f"NDF OLIVEIRA taxi {i}", "0,00", "10,00")]
+    lines += [("OD", 6, "641000", "Salaires", "", "", "Charges PETROVNA", "10,00", "0,00"),
+              ("OD", 6, "512000", "Banque", "", "", "Charges PETROVNA", "0,00", "10,00"),
+              ("OD", 7, "641000", "Salaires", "", "", "Charges PETROVNA", "10,00", "0,00"),
+              ("OD", 7, "512000", "Banque", "", "", "Charges PETROVNA", "0,00", "10,00")]
+    fec, p = mini(lines), new_payload("D")
+    res = detect([fec], p, PREF, WL)
+    for nom in ("ZEBRANSKY", "OLIVEIRA", "PETROVNA"):
+        c = by_name(res, nom)
+        assert c.checked and c.cat == "SAL", nom
+    apply_validation(p, _valide(res))
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    for mot in ("ZEBRANSKY", "OLIVEIRA", "PETROVNA"):
+        assert mot not in txt, mot

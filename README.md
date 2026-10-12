@@ -86,6 +86,11 @@ salaire côté banque est donc en contexte de paie.
   Pour chaque partie distinctive (DURAND), l'outil propose aussi les **formes tronquées** : dernière lettre omise (DURAN) et
   première lettre omise (URAND), avec leur nombre d'occurrences dans le FEC. Les notes de frais de salariés en 425 ou 467 restent
   couvertes (la partie « contextes » d'un salarié s'applique aussi en contexte compte courant).
+- **Libellés tronqués** : pour une société liée (nom, formes sans forme juridique, parties actives « partout »), les coupures de fin
+  de zone sont aussi remplacées (« DURAND CONSULTIN », « DURAND CONSU » ; mot seul coupé jusqu'à 6 lettres). Une forme coupée
+  qui désignerait deux entités est ignorée.
+- **Noms récurrents du personnel** : tout nom revenant au moins 2 fois dans des écritures touchant 421, 425, 467 ou 64x (notes de frais
+  comprises) est proposé **coché** comme salarié (à confirmer).
 - **Homonymes** : en contexte de paie le salarié l'emporte sur un fournisseur homonyme ; à priorité égale (holding / associé
   « DESCHAMPS ») c'est un conflit bloquant à **arbitrer** (attribuer à une entité ou laisser en clair).
 - Un mot isolé relevé en paie, provision ou compte courant et non reconnu est proposé (non coché) : validez-le dans la synthèse.

@@ -24,6 +24,7 @@ from .errors import PseudoFecError
 from .fec_io import FecFile, analyse, parse_fec
 from .generic_list import Whitelist
 from .lexicon import STOPWORDS
+from .parties import expand_truncations
 from .textmatch import LEGAL_FORMS, LINK_WORDS, NameMatcher, fold, tokens
 
 PROTECTED = ("JournalCode", "EcritureNum", "EcritureDate", "PieceDate", "Debit", "Credit", "EcritureLet",
@@ -55,6 +56,21 @@ def output_name(code: str, soc_pseudo: str | None, exercice: str | None, filenam
 PREFERRED = {"paie": ("SAL",), "compte_courant": ("ASS", "GRP"), "provisions": ()}
 
 
+def _truncations(ents: list[dict[str, Any]], base: list[tuple[str, str, int]]) -> list[tuple[str, str, int]]:
+    """Formes tronquées en fin de libellé des sociétés (liées ou entité) : ignorées si elles désignent deux entités."""
+    cats = {e["uid"]: e["cat"] for e in ents}
+    exact = {}
+    for t, u, _ in base:
+        exact.setdefault(" ".join(tokens(t)), set()).add(u)
+    found: dict[str, set[str]] = {}
+    for t, u, _ in base:
+        if cats.get(u) in ("GRP", "SOC"):
+            for x in expand_truncations(t):
+                found.setdefault(" ".join(tokens(x)), set()).add(u)
+    return [(x, next(iter(us)), 1) for x, us in found.items()
+            if len(us) == 1 and not (exact.get(x, set()) - us)]
+
+
 def build_matchers(ents: list[dict[str, Any]]) -> tuple[NameMatcher, dict[str, NameMatcher]]:
     """Matcher global (noms, variantes, parties « partout ») et un matcher par contexte sensible.
 
@@ -69,6 +85,7 @@ def build_matchers(ents: list[dict[str, Any]]) -> tuple[NameMatcher, dict[str, N
         for p in e.get("parties", []):
             if p.get("actif") and p.get("portee") == "partout" and _ALPHA.search(p["texte"]):
                 base.append((p["texte"], e["uid"], 1))
+    base += _truncations(ents, base)
     glob = NameMatcher(base)
     ctx = {}
     for cx in PRIORITY:

@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - dépend de l'installation
 
 from . import redact
 from .contexts import CONTEXT_LABELS, DEFAULT_CONTEXTS, contexts_for_accounts
-from .parties import is_person, parts_for
+from .parties import expand_truncations, is_person, looks_like_person, parts_for
 from .fec_io import FecFile
 from .generic_list import Whitelist
 from .lexicon import GENERIC_ACCOUNT_WORDS, GENERIC_COMPANY_WORDS, PAYROLL_PREFIXES, SALARY_WORDS, STOPWORDS
@@ -66,6 +66,8 @@ def refine_category(name: str, p3: str, cat: str) -> str:
     if p3 in ("451", "455", "456", "457", "458", "467") and cat in ("ASS", "TIE", "GRP") \
             and any(fold(t) in LEGAL_FORMS or fold(t) in GENERIC_COMPANY_WORDS for t in TOKEN_RE.findall(name)):
         return "GRP"
+    if p3 == "467" and cat == "TIE" and looks_like_person(name):
+        return "SAL"            # note de frais / avance d'un salarié, nom récurrent à retenir
     return cat
 
 
@@ -561,6 +563,13 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
                 w.exemples.append(lib)
     for f, w in words.items():
         cands.setdefault(f, w)
+    for c in cands.values():          # nom récurrent en paie / 421 / 425 / 467 / 64 : retenu (à confirmer)
+        toks = tokens(c.nom)
+        if (c.source in ("libelle", "contexte") and c.statut != "connu" and c.contextes.get("paie", 0) >= 2
+                and toks and not all(is_common(t) for t in toks) and not any(t in LEGAL_FORMS for t in toks)
+                and not whitelist.matches(c.nom) and c.cat in ("SAL", "TIE")):
+            c.cat, c.confiance = "SAL", "haute"
+            c.notes.append("Nom récurrent dans les écritures de paie, de personnel ou de notes de frais : retenu (à confirmer).")
 
     # 5. liste blanche, pré-cochage, exemples
     for c in cands.values():
@@ -633,10 +642,16 @@ def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None
     for c in pool:
         c.parties = [{**p, "n": 0, "ctx": {}, "risque": []} for p in parts_for(c.nom, c.cat)[:16]]
         items += [(p["texte"], (c.key, i)) for i, p in enumerate(c.parties)]
+        if c.cat in ("GRP", "SOC"):          # libellé tronqué par la taille du champ : « DURAND CONSULTIN »
+            items += [(x, (c.key, i)) for i, p in enumerate(c.parties) if p["kind"] != "ajoutée"
+                      for x in expand_truncations(p["texte"])]
+            items += [(x, (c.key, -1)) for x in expand_truncations(c.nom)]
     matcher = NameMatcher(items)
     for lib, e in hv.libs.items():
         lc = hv.lib_ctx.get(lib, {})
         for _, _, (ck, i) in matcher.find(lib):
+            if i < 0:
+                continue
             p = cands[ck].parties[i]
             p["n"] += e["n"]
             for cx, n in lc.items():
