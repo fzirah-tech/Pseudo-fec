@@ -331,3 +331,19 @@ def test_nom_recurrent_en_paie_et_en_467_retenu_et_pseudonymise():
     txt = out.data.decode() if hasattr(out, "data") else str(out)
     for mot in ("ZEBRANSKY", "OLIVEIRA", "PETROVNA"):
         assert mot not in txt, mot
+
+
+def test_noms_du_467_tous_retenus_personnes_notaires_societes():
+    lines = []
+    for i, (nom, lib) in enumerate([("Marine LEFEBVRE", "Avance Marine LEFEBVRE"), ("Etude MARCHETTI notaire", "Provision MARCHETTI"),
+                                    ("BOREAL PARTENAIRES", "Avance BOREAL")], 1):
+        lines += [("OD", i, "467000", nom, "", "", lib, "10,00", "0,00"), ("OD", i, "512000", "Banque", "", "", lib, "0,00", "10,00")]
+    fec, p = mini(lines), new_payload("D")
+    res = detect([fec], p, PREF, WL)
+    for nom in ("Marine LEFEBVRE", "Etude MARCHETTI notaire", "BOREAL PARTENAIRES"):
+        assert by_name(res, nom).checked, nom
+    apply_validation(p, _valide(res))
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    for mot in ("LEFEBVRE", "MARCHETTI", "BOREAL"):
+        assert mot not in txt, mot

@@ -55,5 +55,5 @@ participations participation patrimoine patrimoniale gestion conseil services se
 developpement promotion batiment construction transport distribution commerce industries industrie technologies
 technologie consulting finance capital ventures management media sante medical foncier foncieres societe civile
 associes partenaires partners solutions entreprise entreprises sud nord est ouest centre
-ateliers atelier boulangerie garage cabinet etablissements maison pharmacie restaurant hotel agence bureau boutique magasin
+notaire notaires etude office maitre ateliers atelier boulangerie garage cabinet etablissements maison pharmacie restaurant hotel agence bureau boutique magasin
 """.split())

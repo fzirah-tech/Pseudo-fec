@@ -66,8 +66,8 @@ def refine_category(name: str, p3: str, cat: str) -> str:
     if p3 in ("451", "455", "456", "457", "458", "467") and cat in ("ASS", "TIE", "GRP") \
             and any(fold(t) in LEGAL_FORMS or fold(t) in GENERIC_COMPANY_WORDS for t in TOKEN_RE.findall(name)):
         return "GRP"
-    if p3 == "467" and cat == "TIE" and looks_like_person(name):
-        return "SAL"            # note de frais / avance d'un salarié, nom récurrent à retenir
+    if p3 == "467" and cat in ("ASS", "TIE") and not looks_like_person(name):
+        return "GRP"            # 467 : sociétés à lien relationnel, notaires, avances… traités comme société liée
     return cat
 
 
@@ -670,7 +670,7 @@ def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None
                 p["risque"].append("trop court")
             if c.cat in ("GRP", "SOC"):
                 p["portee"], p["actif"] = "partout", not p["risque"]
-            elif person and c.cat in ("SAL", "ASS"):
+            elif person and (c.cat in ("SAL", "ASS") or any(a.startswith("467") for a in c.comptes)):
                 p["portee"], p["actif"] = "contextes", "mot courant" not in p["risque"]
             else:       # société ordinaire ou personne « supposée » : proposé, à activer par l'utilisateur
                 p["portee"], p["actif"] = "contextes", False

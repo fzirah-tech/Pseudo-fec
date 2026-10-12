@@ -91,6 +91,9 @@ salaire côté banque est donc en contexte de paie.
   qui désignerait deux entités est ignorée.
 - **Noms récurrents du personnel** : tout nom revenant au moins 2 fois dans des écritures touchant 421, 425, 467 ou 64x (notes de frais
   comprises) est proposé **coché** comme salarié (à confirmer).
+- **Compte 467** : tous les noms portés par un compte 467 (salariés en note de frais, non-salariés, notaires, sociétés à lien
+  relationnel, avances) sont proposés cochés ; une raison sociale y est classée « Société liée » (parties distinctives et libellés
+  tronqués couverts), une personne reste « Autre tiers » avec ses prénom et nom actifs. Reclassement possible à la validation.
 - **Homonymes** : en contexte de paie le salarié l'emporte sur un fournisseur homonyme ; à priorité égale (holding / associé
   « DESCHAMPS ») c'est un conflit bloquant à **arbitrer** (attribuer à une entité ou laisser en clair).
 - Un mot isolé relevé en paie, provision ou compte courant et non reconnu est proposé (non coché) : validez-le dans la synthèse.
