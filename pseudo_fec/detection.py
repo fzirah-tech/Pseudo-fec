@@ -31,6 +31,8 @@ except ImportError:  # pragma: no cover - dépend de l'installation
         return _similarity_fallback(a, b)
 
 from . import redact
+from .contexts import CONTEXT_LABELS, DEFAULT_CONTEXTS, contexts_for_accounts
+from .parties import is_person, parts_for
 from .fec_io import FecFile
 from .generic_list import Whitelist
 from .lexicon import GENERIC_ACCOUNT_WORDS, PAYROLL_PREFIXES, SALARY_WORDS, STOPWORDS
@@ -78,9 +80,11 @@ class Harvest:
     alpha_comptes: set[str] = field(default_factory=set)     # CompteNum contenant des lettres
     tier_prefixes: set[str] = field(default_factory=set)
     ctx: Counter = field(default_factory=Counter)            # (tiers, variante rencontrée dans l'écriture) -> lignes
+    lib_ctx: dict[str, Counter] = field(default_factory=dict)   # EcritureLib -> {contexte: lignes}
+    ctx_lines: Counter = field(default_factory=Counter)      # contexte -> lignes
 
 
-def harvest(fec: FecFile, tier_prefixes: Iterable[str]) -> Harvest:
+def harvest(fec: FecFile, tier_prefixes: Iterable[str], contexts: dict[str, list[str]] | None = None) -> Harvest:
     c = fec.fmt.columns
     iJL, iCpt, iCptL, iAux, iAuxL, iPiece, iLib, iJ = (
         c["JournalLib"] if "JournalLib" in c else None, c["CompteNum"], c["CompteLib"], c["CompAuxNum"],
@@ -129,12 +133,22 @@ def harvest(fec: FecFile, tier_prefixes: Iterable[str]) -> Harvest:
         pr = r[iPiece].strip()
         if pr:
             h.pieces[pr] += 1
-        d = ecr.setdefault((r[iJ].strip(), r[iN].strip()), [set(), Counter()])
+        d = ecr.setdefault((r[iJ].strip(), r[iN].strip()), [set(), Counter(), set(), 0])
         if auxl:
             d[0].add(auxl)
         if lib and lib != '""':
             d[1][lib] += 1
-    for tiers, libs in ecr.values():       # libellés d'une écriture portant un tiers : variantes probables de son nom
+        d[2].add(cpt)
+        d[3] += 1
+    for tiers, libs, accs, nlines in ecr.values():
+        ctxs = contexts_for_accounts(accs, contexts)          # contexte de l'écriture entière (paie, provisions…)
+        for cx in ctxs:
+            h.ctx_lines[cx] += nlines
+        for lib, n in libs.items():
+            lc = h.lib_ctx.setdefault(lib, Counter())
+            for cx in ctxs:
+                lc[cx] += n
+    for tiers, libs, accs, nlines in ecr.values():       # libellés d'une écriture portant un tiers : variantes probables de son nom
         if not tiers:
             continue
         for lib, n in libs.items():
@@ -180,6 +194,9 @@ def merge_harvests(hs: list[Harvest]) -> Harvest:
         out.vocab.update(h.vocab)
         out.alpha_comptes |= h.alpha_comptes
         out.ctx.update(h.ctx)
+        out.ctx_lines.update(h.ctx_lines)
+        for lib, lc in h.lib_ctx.items():
+            out.lib_ctx.setdefault(lib, Counter()).update(lc)
         for lib, e in h.libs.items():
             o = out.libs.setdefault(lib, {"n": 0, "j": set(), "p": set(), "acc": Counter()})
             o["n"] += e["n"]
@@ -206,6 +223,9 @@ class Candidate:
     comptes: Counter = field(default_factory=Counter)
     exemples: list[str] = field(default_factory=list)
     variantes_proposees: list[dict[str, Any]] = field(default_factory=list)
+    contextes: Counter = field(default_factory=Counter)            # où le nom apparaît : contexte -> lignes
+    parties: list[dict[str, Any]] = field(default_factory=list)     # parties identifiantes proposées
+    saved_parties: dict[str, dict[str, Any]] = field(default_factory=dict)
     occurrences: int = 0
     confiance: str = "haute"
     statut: str = "nouveau"           # nouveau | connu | liste_blanche
@@ -225,7 +245,7 @@ class Candidate:
             "nb_comptes": len(self.comptes), "exemples": self.exemples, "occurrences": self.occurrences,
             "confiance": self.confiance, "statut": self.statut, "liste_blanche": self.liste_blanche,
             "checked": self.checked, "notes": self.notes, "merge_with": self.merge_with,
-            "variantes_proposees": self.variantes_proposees,
+            "variantes_proposees": self.variantes_proposees, "contextes": dict(self.contextes), "parties": self.parties,
         }
 
 
@@ -320,16 +340,19 @@ class DetectionResult:
     incrustations: dict[str, Any]
     conflits: list[dict[str, Any]]
     stats: dict[str, Any]
+    synthese: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {"candidats": [c.as_dict() for c in self.candidates], "sensibles": self.sensibles,
-                "incrustations": self.incrustations, "conflits": self.conflits, "stats": self.stats}
+                "incrustations": self.incrustations, "conflits": self.conflits, "stats": self.stats,
+                "synthese": self.synthese}
 
 
 def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict[str, list[str]],
-           whitelist: Whitelist, extra_sirens: frozenset[str] = frozenset()) -> DetectionResult:
+           whitelist: Whitelist, extra_sirens: frozenset[str] = frozenset(),
+           contexts: dict[str, list[str]] | None = None) -> DetectionResult:
     tier_prefixes = {p for lst in priority_prefixes.values() for p in lst}
-    hv = merge_harvests([harvest(f, tier_prefixes) for f in fecs])
+    hv = merge_harvests([harvest(f, tier_prefixes, contexts) for f in fecs])
     cands: dict[str, Candidate] = {}
 
     def get(key: str, nom: str, cat: str, source: str, **kw: Any) -> Candidate:
@@ -351,6 +374,7 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             c.variants.setdefault(v, 0)
         for i in e.get("ids", []):
             c.variants.setdefault(i, 0)
+        c.saved_parties = {fold(x["texte"]): x for x in e.get("parties", [])}
 
     # 2. CompAuxLib
     aux_by_name: dict[str, Counter] = defaultdict(Counter)
@@ -374,6 +398,9 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             if not name or fold(name) in STOPWORDS:
                 continue
             c = get(name, name, category_for_prefix(p3), "compte")
+            if all(_kind(t) == "x" for t in TOKEN_RE.findall(name)) and c.statut != "connu":
+                c.confiance = "faible"        # intitulé tout en minuscules : plutôt descriptif (« salaires 2022 ») qu'un nom
+                c.notes.append("Intitulé de compte en minuscules : probablement descriptif, non coché par défaut.")
             c.variants.setdefault(name, 0)
             c.champs["CompteLib"] += n
             c.occurrences += n
@@ -433,6 +460,8 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             c.var_origin.setdefault(lib[a:b], "libelle")
             c.champs["EcritureLib"] += e["n"]
             c.occurrences += e["n"]
+            for cx, n in hv.lib_ctx.get(lib, {}).items():
+                c.contextes[cx] += n
             for acc, n in e["acc"].items():
                 c.comptes[acc] += 0
             if len(c.exemples) < MAX_LIBS_EXAMPLES and lib not in c.exemples:
@@ -468,6 +497,8 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             u.variants[txt] += e["n"]
             u.champs["EcritureLib"] += e["n"]
             u.occurrences += e["n"]
+            for cx, n in hv.lib_ctx.get(lib, {}).items():
+                u.contextes[cx] += n
             if shape == "personne" and pay:
                 u.confiance = "haute"
             elif legal or (shape == "personne" and u.confiance != "haute"):
@@ -485,6 +516,42 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
               and "forme : seul" in u.notes]:
         del cands[k]
 
+    # 4b. mots isolés relevés dans les contextes sensibles (nom de famille seul, prénom seul…)
+    sens_ctx = ("paie", "compte_courant", "provisions")
+    phrase_tokens = {t for c in cands.values() for t in tokens(c.nom)}
+    words: dict[str, Candidate] = {}
+    for lib, e in hv.libs.items():
+        lc = hv.lib_ctx.get(lib)
+        if not lc or not any(cx in lc for cx in sens_ctx):
+            continue
+        cov = covered_by_lib.get(lib, [])
+        for m in TOKEN_RE.finditer(lib):
+            tok = m.group()
+            f = fold(tok)
+            if len(tok) < 3 or _kind(tok) == "x" or f in STOPWORDS or f in LEGAL_FORMS or f in LINK_WORDS:
+                continue
+            if is_vocab(f) or all(t in phrase_tokens for t in tokens(tok)) or whitelist.matches(tok):
+                continue
+            if (m.start() > 0 and lib[m.start() - 1].isdigit()) or (m.end() < len(lib) and lib[m.end()].isdigit()):
+                continue
+            if any(a <= m.start() < b for a, b in cov):
+                continue
+            w = words.get(f)
+            if w is None:
+                w = words[f] = Candidate(key=f, nom=tok, cat="SAL" if "paie" in lc else "TIE", source="contexte",
+                                         confiance="moyenne", checked=False)
+                w.notes.append("Mot isolé relevé dans une écriture de " + ("paie" if "paie" in lc else "provision / compte courant")
+                               + " : nom de famille, prénom ou nom partiel ?")
+            w.variants[tok] += e["n"]
+            w.champs["EcritureLib"] += e["n"]
+            w.occurrences += e["n"]
+            for cx, n in lc.items():
+                w.contextes[cx] += n
+            if len(w.exemples) < MAX_LIBS_EXAMPLES and lib not in w.exemples:
+                w.exemples.append(lib)
+    for f, w in words.items():
+        cands.setdefault(f, w)
+
     # 5. liste blanche, pré-cochage, exemples
     for c in cands.values():
         if c.statut == "connu" and c.uid:
@@ -494,12 +561,15 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             c.statut, c.liste_blanche, c.checked = "liste_blanche", wl, False
             c.notes.append(f"Tiers usuel maintenu (liste blanche : {wl}) — cochez pour le pseudonymiser quand même.")
         else:
-            c.checked = c.source in ("aux", "compte") or c.confiance == "haute"
+            c.checked = c.source == "aux" or (c.source == "compte" and c.confiance != "faible") or c.confiance == "haute"
         if not c.exemples:
             c.exemples = _examples_for(c, hv)
 
     # 6. propositions de fusion
     _suggest_merges(list(cands.values()))
+
+    # 5b. parties identifiantes (nom de famille, prénom, partie distinctive d'une société)
+    _attach_parties(cands, hv, lambda f: f in STOPWORDS or f in hv.vocab or f in lower_words)
 
     _note_overlaps(list(cands.values()))
     _propose_person_variants(list(cands.values()), hv)
@@ -514,8 +584,88 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
     stats = {"lignes": hv.n_lines, "libelles_distincts": len(hv.libs), "candidats": len(cands),
              "societe_suggestions": _societe_suggestions(cands)}
     order = {"aux": 0, "compte": 1, "fiche": 2, "table": 2, "manuel": 2, "libelle": 3}
+    order["contexte"] = 4
     lst = sorted(cands.values(), key=lambda c: (c.statut == "liste_blanche", order.get(c.source, 4), -c.occurrences))
-    return DetectionResult(lst, sens, incr, conflits, stats)
+    ctx_libs: Counter = Counter()
+    for lc in hv.lib_ctx.values():
+        for cx in lc:
+            ctx_libs[cx] += 1
+    top: dict[str, Counter] = defaultdict(Counter)
+    for lib, lc in hv.lib_ctx.items():
+        for cx, n in lc.items():
+            top[cx][lib] = n
+    synthese = {"contextes": [{"id": cx, "label": CONTEXT_LABELS[cx], "lignes": hv.ctx_lines.get(cx, 0),
+                               "libelles": ctx_libs.get(cx, 0),
+                               "exemples": [{"texte": t, "n": n} for t, n in top[cx].most_common(8)]}
+                              for cx in ("paie", "compte_courant", "provisions", "autres")]}
+    return DetectionResult(lst, sens, incr, conflits, stats, synthese)
+
+
+_SOURCE_RANK = {"aux": 0, "compte": 1, "fiche": 2, "table": 2, "manuel": 2, "libelle": 3, "contexte": 4}
+
+
+def _lead(c: Candidate, cands: dict[str, Candidate], group: set[str]) -> Candidate:
+    members = [cands[k] for k in group if k in cands]
+    return min(members, key=lambda x: (x.statut != "connu", _SOURCE_RANK.get(x.source, 5), -x.occurrences, x.key))
+
+
+def _attach_parties(cands: dict[str, Candidate], hv: Harvest, is_common) -> None:
+    """Propose, pour chaque nom, ses parties identifiantes avec leur fréquence dans le FEC et leurs risques."""
+    pool = [c for c in cands.values() if c.statut != "liste_blanche" and c.source != "contexte"]
+    owners: dict[str, set[str]] = defaultdict(set)
+    for c in pool:
+        if c.source in ("libelle", "contexte") and len(tokens(c.nom)) == 1:
+            continue          # simple mot isolé : mention partielle d'un nom, pas un nom distinct
+        for t in tokens(c.nom):
+            owners[t].add(c.key)
+    same = {c.key: {c.key, *c.merge_with} for c in pool}          # « Karim BENALI » et « BENALI Karim » : même personne
+    items = []
+    for c in pool:
+        c.parties = [{**p, "n": 0, "ctx": {}, "risque": []} for p in parts_for(c.nom, c.cat)[:10]]
+        items += [(p["texte"], (c.key, i)) for i, p in enumerate(c.parties)]
+    matcher = NameMatcher(items)
+    for lib, e in hv.libs.items():
+        lc = hv.lib_ctx.get(lib, {})
+        for _, _, (ck, i) in matcher.find(lib):
+            p = cands[ck].parties[i]
+            p["n"] += e["n"]
+            for cx, n in lc.items():
+                p["ctx"][cx] = p["ctx"].get(cx, 0) + n
+    for c in pool:
+        person = is_person(c.nom, c.cat)
+        for p in c.parties:
+            toks = [t for t in tokens(p["texte"]) if t not in LINK_WORDS and t not in LEGAL_FORMS]
+            if toks and all(is_common(t) for t in toks):
+                p["risque"].append("mot courant")
+            others = sorted({cands[k].nom for t in toks for k in owners.get(t, ()) if k not in same[c.key] and k in cands})
+            if others:
+                p["risque"].append("partagé avec un autre nom")
+                p["partage_avec"] = others[:3]
+            if len(p["texte"]) < (3 if person else 5):
+                p["risque"].append("trop court")
+            if c.cat in ("GRP", "SOC"):
+                p["portee"], p["actif"] = "partout", not p["risque"]
+            elif person and c.cat in ("SAL", "ASS"):
+                p["portee"], p["actif"] = "contextes", "mot courant" not in p["risque"]
+            else:       # société ordinaire ou personne « supposée » : proposé, à activer par l'utilisateur
+                p["portee"], p["actif"] = "contextes", False
+            lead = _lead(c, cands, same[c.key])
+            if lead is not c:         # même personne proposée sous deux écritures : seule la principale active ses parties
+                p["actif"] = False
+                p["risque"].append(f"même personne que « {lead.nom} »")
+            sv = c.saved_parties.get(fold(p["texte"]))
+            if sv:
+                p["portee"], p["actif"] = sv.get("portee", p["portee"]), bool(sv.get("actif", p["actif"]))
+        have = {fold(p["texte"]) for p in c.parties}
+        for f, sv in c.saved_parties.items():
+            if f not in have:
+                c.parties.append({"texte": sv["texte"], "kind": "ajoutée", "n": 0, "ctx": {}, "risque": [],
+                                  "portee": sv.get("portee", "contextes"), "actif": bool(sv.get("actif", True))})
+        c.parties.sort(key=lambda p: (-p["n"], p["texte"]))
+    owner_of = {fold(p["texte"]): c.key for c in pool for p in c.parties}
+    for k in [k for k, c in cands.items() if c.source in ("libelle", "contexte") and c.statut != "connu"
+              and owner_of.get(fold(c.nom), k) != k]:
+        del cands[k]       # nom de famille / prénom seul : c'est la partie d'un nom déjà proposé
 
 
 def _examples_for(c: Candidate, hv: Harvest) -> list[str]:

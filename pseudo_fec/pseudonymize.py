@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import redact
+from .contexts import DEFAULT_CONTEXTS, PRIORITY, contexts_for_accounts, main_context
 from .detection import detect
 from .errors import PseudoFecError
 from .fec_io import FecFile, analyse, parse_fec
@@ -51,10 +52,40 @@ def output_name(code: str, soc_pseudo: str | None, exercice: str | None, filenam
     return f"{base}_FEC_{(exercice or 'XXXX').replace('/', '-')}_PSEUDO{ext}"
 
 
+PREFERRED = {"paie": ("SAL",), "compte_courant": ("ASS", "GRP"), "provisions": ()}
+
+
+def build_matchers(ents: list[dict[str, Any]]) -> tuple[NameMatcher, dict[str, NameMatcher]]:
+    """Matcher global (noms, variantes, parties « partout ») et un matcher par contexte sensible.
+
+    Dans un contexte, les parties « contextes » sont ajoutées : en paie le salarié l'emporte sur un homonyme
+    (MARTIN fournisseur / MARTIN salariée), en compte courant les associés et sociétés liées. À rang égal,
+    c'est un conflit à arbitrer."""
+    base = []
+    for e in ents:
+        for v in {e["nom"], *e.get("variantes", [])}:
+            if _ALPHA.search(v):
+                base.append((v, e["uid"], 1))
+        for p in e.get("parties", []):
+            if p.get("actif") and p.get("portee") == "partout" and _ALPHA.search(p["texte"]):
+                base.append((p["texte"], e["uid"], 1))
+    glob = NameMatcher(base)
+    ctx = {}
+    for cx in PRIORITY:
+        items = list(base)
+        for e in ents:
+            for p in e.get("parties", []):
+                if p.get("actif") and p.get("portee") == "contextes" and _ALPHA.search(p["texte"]):
+                    items.append((p["texte"], e["uid"], 0 if e["cat"] in PREFERRED[cx] else 2))
+        ctx[cx] = NameMatcher(items)
+    return glob, ctx
+
+
 @dataclass
 class Plan:
     by_uid: dict[str, dict[str, Any]]
     matcher: NameMatcher
+    ctx_matchers: dict[str, NameMatcher]
     kept: list[dict[str, Any]]
     kept_matcher: NameMatcher
     soc_pseudo: str | None
@@ -65,8 +96,15 @@ class Plan:
     @property
     def conflicts(self) -> list[dict[str, Any]]:
         names = {u: e["nom"] for u, e in self.by_uid.items()}
-        return [{"texte": " ".join(t), "entites": [names[k] for k in keys if k in names]}
-                for t, keys in self.matcher.conflicts.items()]
+        out = [{"texte": " ".join(t), "entites": [names[k] for k in keys if k in names]}
+               for t, keys in self.matcher.conflicts.items()]
+        seen = {c["texte"] for c in out}
+        for m in self.ctx_matchers.values():
+            for t, keys in m.conflicts.items():
+                if " ".join(t) not in seen:
+                    seen.add(" ".join(t))
+                    out.append({"texte": " ".join(t), "entites": [names[k] for k in keys if k in names]})
+        return out
 
 
 def build_plan(payload: dict[str, Any], replace_codes: bool = True) -> Plan:
@@ -78,7 +116,8 @@ def build_plan(payload: dict[str, Any], replace_codes: bool = True) -> Plan:
     soc = next((e for e in ents if e["cat"] == "SOC"), None)
     soc_sirens = frozenset(i[:9] for i in (soc or {}).get("ids", []) if len(i) >= 9)
     all_sirens = frozenset(i[:9] for e in payload["entities"] for i in e.get("ids", []) if len(i) >= 9) | soc_sirens
-    return Plan({e["uid"]: e for e in ents}, NameMatcher(items(ents)), kept, NameMatcher(items(kept)),
+    glob, ctx = build_matchers(ents)
+    return Plan({e["uid"]: e for e in ents}, glob, ctx, kept, NameMatcher(items(kept)),
                 soc["pseudo"] if soc else None, soc_sirens, all_sirens, replace_codes)
 
 
@@ -99,27 +138,30 @@ class FileResult:
     prenoms: list[dict[str, Any]]
     sha256_entree: str = ""
     sha256_sortie: str = ""
+    contextes: dict[str, int] = field(default_factory=dict)
 
 
 class Pseudonymizer:
     def __init__(self, plan: Plan, whitelist: Whitelist | None = None):
         self.plan = plan
         self.whitelist = whitelist
-        self.cache: dict[tuple[str, str], tuple[str, tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]] = {}
+        self.cache: dict[tuple, tuple[str, tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]] = {}
         self.counts: Counter = Counter()
         self.kept_counts: Counter = Counter()
         self.fields: Counter = Counter()
         self.codes: Counter = Counter()
         self.unprocessed_codes = 0
         self.account_pseudos: dict[str, set[str]] = defaultdict(set)
+        self.row_ctx: dict[tuple[str, str], str | None] = {}     # écriture -> contexte sensible (paie, provisions…)
+        self.ctx_hits: Counter = Counter()
 
     # -- un texte
-    def text(self, value: str) -> tuple[str, Counter, Counter]:
+    def text(self, value: str, ctx: str | None = None) -> tuple[str, Counter, Counter]:
         p = self.plan
         if not value.strip() or value == '""':
             return value, Counter(), Counter()
         sens = redact.scan(value, p.all_sirens)
-        names = p.matcher.find(value)
+        names = (p.ctx_matchers.get(ctx) or p.matcher).find(value)
         kept = p.kept_matcher.find(value) if p.kept else []
         kc: Counter = Counter()
         for _, _, uid in kept:
@@ -150,11 +192,11 @@ class Pseudonymizer:
         out.append(value[last:])
         return "".join(out), cnt, kc
 
-    def _cached(self, field_name: str, value: str):
-        key = (field_name, value)
+    def _cached(self, field_name: str, value: str, ctx: str | None = None):
+        key = (field_name, value, ctx)
         hit = self.cache.get(key)
         if hit is None:
-            new, cnt, kc = self.text(value)
+            new, cnt, kc = self.text(value, ctx)
             hit = self.cache[key] = (new, tuple(cnt.items()), tuple(kc.items()))
         return hit
 
@@ -170,12 +212,13 @@ class Pseudonymizer:
     # -- une ligne
     def row(self, r: list[str], cols: dict[str, int]) -> list[str]:
         new = list(r)
+        ctx = self.row_ctx.get((r[cols["JournalCode"]].strip(), r[cols["EcritureNum"]].strip()))
         for f in TEXT_FIELDS:
             i = cols.get(f)
             if i is None:
                 continue
             v = r[i]
-            nv, cnt, kc = self._cached(f, v)
+            nv, cnt, kc = self._cached(f, v, ctx)
             if kc:
                 for uid, n in kc:
                     self.kept_counts[uid] += n
@@ -184,6 +227,8 @@ class Pseudonymizer:
                 self.fields[f] += 1
                 for k, n in cnt:
                     self.counts[k] += n
+                    if ctx and k.startswith("E:"):
+                        self.ctx_hits[ctx] += n
         if self.plan.replace_codes:
             self._codes(r, new, cols)
         cpt = r[cols["CompteNum"]].strip()
@@ -222,7 +267,8 @@ class Pseudonymizer:
 
 
 def pseudonymize_fec(fec: FecFile, payload: dict[str, Any], code: str, replace_codes: bool = True,
-                     whitelist: Whitelist | None = None, priority_prefixes: dict[str, list[str]] | None = None) -> FileResult:
+                     whitelist: Whitelist | None = None, priority_prefixes: dict[str, list[str]] | None = None,
+                     contexts: dict[str, list[str]] | None = None) -> FileResult:
     plan = build_plan(payload, replace_codes)
     if plan.conflicts:
         raise PseudonymizationError("Des conflits de variantes subsistent : résolvez-les à l'étape « Noms à valider ».")
@@ -236,6 +282,10 @@ def pseudonymize_fec(fec: FecFile, payload: dict[str, Any], code: str, replace_c
     wl0 = whitelist or Whitelist([])
     ps = Pseudonymizer(plan, wl0)
     protected = [cols[c] for c in PROTECTED if c in cols]
+    accounts: dict[tuple[str, str], set[str]] = defaultdict(set)      # contexte sensible déterminé par écriture
+    for r in fec.rows():
+        accounts[(r[cols["JournalCode"]].strip(), r[cols["EcritureNum"]].strip())].add(r[cols["CompteNum"]].strip())
+    ps.row_ctx = {k: main_context(contexts_for_accounts(v, contexts)) for k, v in accounts.items()}
 
     def rows():
         for r in fec.rows():
@@ -292,7 +342,8 @@ def pseudonymize_fec(fec: FecFile, payload: dict[str, Any], code: str, replace_c
         remplacements={k[2:]: n for k, n in sorted(ps.counts.items()) if k.startswith("E:")},
         sensibles={k[2:]: n for k, n in sorted(ps.counts.items()) if k.startswith("S:")},
         champs=dict(ps.fields), codes_remplaces=dict(ps.codes), non_cochees=non_cochees, alertes=alertes,
-        residuels=residuels, prenoms=prenoms, sha256_entree=fec.sha256, sha256_sortie=out.sha256)
+        residuels=residuels, prenoms=prenoms, sha256_entree=fec.sha256, sha256_sortie=out.sha256,
+        contextes=dict(ps.ctx_hits))
 
 
 def second_pass(out: FecFile, plan: Plan, payload: dict[str, Any], ps: Pseudonymizer,

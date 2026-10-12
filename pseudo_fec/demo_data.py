@@ -34,11 +34,12 @@ FOURNISSEURS = [("DUPONT BATIMENT SARL", "DUPBAT"), ("MARTINEZ ET FILS", "MARTIN
                 ("MARTIN", "MARTI2"), ("Boulangerie ROSE", "ROSE"),
                 ("ÉTABLISSEMENTS LEFÈVRE-DUBOIS", "LEFDUB"), ("ORANGE", "ORANGE"), ("URSSAF", "URSSAF")]
 CLIENTS = [("Société DURAND & ASSOCIÉS", "DURAND"), ("Mme Zoé N'GUYEN", "NGUYEN"), ("ŒUVRES DU SUD SARL", "OEUVRE")]
-SALARIES = ["Karim BENALI", "Sophie MARTIN", "Jean-Pierre LEFEBVRE"]
+SALARIES = ["Karim BENALI", "Sophie MARTIN", "Jean-Pierre LEFEBVRE", "Aïcha BOUSSAC-NEVEU"]
+SALARIE_HORS_COMPTES = "Bruno VASSEUR"      # n'apparaît que dans des libellés de paie (aucun compte individualisé)
 IBAN = "FR7630006000011234567890189"
 
 REAL_NAMES = [ENTITE, DIRIGEANT, ASSOCIE, MERE, SCI, *[f[0] for f in FOURNISSEURS if f[0] not in ("ORANGE", "URSSAF")],
-              *[c[0] for c in CLIENTS], *SALARIES]
+              *[c[0] for c in CLIENTS], *SALARIES, SALARIE_HORS_COMPTES]
 
 
 @dataclass
@@ -147,6 +148,44 @@ def make_fec(style: str = "standard", encoding: str = "utf-8", year: int = 2024,
             lib = f"VIR SEPA {nm} IBAN {IBAN} REF {i:05d}"
             add("BQ", "Banque", m, d, c, cl, a, al, f"BQ{i:04d}", lib, ttc, Decimal(0), "AA")
             add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{i:04d}", lib, Decimal(0), ttc)
+
+    def sal_account(sal: str) -> tuple[str, str]:
+        if cabinet:
+            return f"421{SALARIES.index(sal) + 1:06d}", sal
+        if penny:
+            return f"421{sal.split()[-1][:5].upper()}", sal
+        return "421000", "Personnel - rémunérations dues"
+
+    # --- écritures « sensibles » : paie, provisions, comptes courants. Les libellés ne citent souvent qu'UN mot du nom
+    for j in range(24):
+        num[0] += 1
+        m, d = 1 + j % 12, 2 + (j * 5) % 25
+        amt = Decimal(rnd.randint(100, 5000)) + Decimal(rnd.randint(0, 99)) / 100
+        sal = SALARIES[j % len(SALARIES)]
+        first, last = sal.split()[0], sal.split()[-1]
+        kind = j % 6
+        if kind in (0, 1):                        # paie : nom de famille seul, ou prénom seul
+            lib = f"SALAIRES {m:02d}/{year} {last}" if kind == 0 else f"ACOMPTE {first}"
+            c, cl = sal_account(sal)
+            add("OD", "Opérations diverses", m, d, "641000", "Rémunérations du personnel", "", "", f"PAIE{j:02d}", lib, amt, Decimal(0))
+            add("OD", "Opérations diverses", m, d, c, cl, "", "", f"PAIE{j:02d}", lib, Decimal(0), amt)
+        elif kind == 2:                           # paie : salarié sans compte individualisé
+            lib = f"NET A PAYER {SALARIE_HORS_COMPTES.split()[-1]}"
+            add("OD", "Opérations diverses", m, d, "641000", "Rémunérations du personnel", "", "", f"PAIE{j:02d}", lib, amt, Decimal(0))
+            add("OD", "Opérations diverses", m, d, "421000", "Personnel - rémunérations dues", "", "", f"PAIE{j:02d}", lib, Decimal(0), amt)
+        elif kind == 3:                           # provisions
+            lib = rnd.choice([f"PROVISION CONGES PAYES {last}", "PROV LITIGE TILLEULS", "DEPRECIATION CREANCE DURAND"])
+            add("OD", "Opérations diverses", m, d, "681500", "Dotations aux provisions", "", "", f"PRV{j:02d}", lib, amt, Decimal(0))
+            add("OD", "Opérations diverses", m, d, "151000", "Provisions pour risques", "", "", f"PRV{j:02d}", lib, Decimal(0), amt)
+        elif kind == 4:                           # compte courant : nom partiel de l'associé / de la société liée
+            lib = rnd.choice(["CCA DESCHAMPS", "REMB CCA TILLEULS", "AVANCE DESCHAMPS"])
+            add("OD", "Opérations diverses", m, d, "455000", f"Associé - {ASSOCIE}", "", "", f"CC{j:02d}", lib, amt, Decimal(0))
+            add("OD", "Opérations diverses", m, d, "512000", "Banque", "", "", f"CC{j:02d}", lib, Decimal(0), amt)
+        else:                                     # virement de salaire : nom de famille seul (écriture de paie côté 421)
+            lib = f"VIR {last}"
+            c, cl = sal_account(sal)
+            add("BQ", "Banque", m, d, c, cl, "", "", f"BQ{j:02d}S", lib, amt, Decimal(0))
+            add("BQ", "Banque", m, d, "512000", "Banque", "", "", f"BQ{j:02d}S", lib, Decimal(0), amt)
 
     if tva_suffix:  # variante Pennylane « avec suffixes de TVA » : comptes de 12 chiffres, taux dans CompteLib
         for r in lines:

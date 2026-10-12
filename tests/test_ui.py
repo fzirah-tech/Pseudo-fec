@@ -414,3 +414,55 @@ def test_demo_jusqu_a_la_pseudonymisation(app, cfg):
     st, out = app.req("POST", "/api/pseudo/run", {})
     assert st == 200 and len(out["resultats"]) == 2 and "CAT-0000" in out["consigne"]
     assert app.req("POST", "/api/open-folder", {"which": "pseudo"})[0] == 200
+
+
+# ---------------------------------------------------------------- contextes, parties identifiantes, arbitrage (API)
+
+def test_detection_expose_synthese_contextes_et_parties(app):
+    _sans_fiche(app)
+    det = app.req("POST", "/api/detect", {})[1]
+    ctx = {x["id"]: x for x in det["synthese"]["contextes"]}
+    assert ctx["paie"]["lignes"] > 0 and ctx["provisions"]["lignes"] > 0 and ctx["compte_courant"]["lignes"] > 0
+    assert ctx["paie"]["exemples"] and ctx["paie"]["exemples"][0]["n"] >= ctx["paie"]["exemples"][-1]["n"]     # libellés fréquents, en local
+    karim = next(c for c in det["candidats"] if c["nom"] == "Karim BENALI")
+    assert karim["contextes"].get("paie", 0) > 0 and {p["texte"] for p in karim["parties"]} >= {"BENALI", "Karim"}
+    assert next(p for p in karim["parties"] if p["texte"] == "BENALI")["actif"]
+
+
+def test_parties_enregistrees_et_arbitrage_via_api(app):
+    _sans_fiche(app)
+    rows = [{"nom": "Paul Henri DESCHAMPS", "cat": "ASS", "checked": True, "source": "manuel", "touched": True, "variantes": [],
+             "parties": [{"texte": "DESCHAMPS", "portee": "contextes", "actif": True}]},
+            {"nom": "HOLDING DESCHAMPS SAS", "cat": "GRP", "checked": True, "source": "manuel", "touched": True, "variantes": [],
+             "parties": [{"texte": "DESCHAMPS", "portee": "contextes", "actif": True}]}]
+    out = app.req("POST", "/api/entities/save", {"rows": rows})[1]
+    assert out["bloquant"] and out["conflicts"][0]["uids"] and out["conflicts"][0]["contexte"]
+    st = app.req("GET", "/api/pseudo/status")[1]
+    assert not st["pret"] and st["conflits"]
+    asso = out["conflicts"][0]["uids"][0]
+    res = app.req("POST", "/api/entities/arbitrate", {"texte": "DESCHAMPS", "uid": asso})[1]
+    assert res["conflicts"] == []
+    assert app.req("GET", "/api/pseudo/status")[1]["pret"]
+    # les décisions sur les parties sont mémorisées : relues à la détection suivante
+    det = app.req("POST", "/api/detect", {})[1]
+    asso_c = next(c for c in det["candidats"] if c["uid"] == asso)
+    assert any(p["texte"] == "DESCHAMPS" and p["actif"] for p in asso_c["parties"])
+    holding = next(c for c in det["candidats"] if c["nom"] == "HOLDING DESCHAMPS SAS")
+    assert not any(p["texte"] == "DESCHAMPS" and p["actif"] for p in holding["parties"])
+
+
+def test_pseudonymisation_applique_parties_et_contextes_de_bout_en_bout(app, cfg):
+    _sans_fiche(app)
+    app.req("POST", "/api/societe/save", {"raison_sociale": "ATELIERS DU PORT SAS", "siren": SIREN})
+    det = app.req("POST", "/api/detect", {})[1]
+    rows = [{"nom": c["nom"], "cat": c["cat"], "checked": c["statut"] != "liste_blanche", "uid": c["uid"], "source": c["source"], "touched": True,
+             "variantes": [v["texte"] for v in c["variantes"] if v["coche"]],
+             "parties": [{"texte": p["texte"], "portee": p["portee"], "actif": p["actif"]} for p in c["parties"]]} for c in det["candidats"]]
+    out = app.req("POST", "/api/entities/save", {"rows": rows})[1]
+    assert not out["bloquant"], out["conflicts"]
+    st, res = app.req("POST", "/api/pseudo/run", {})
+    assert st == 200 and res["resultats"][0]["contextes"].get("paie", 0) > 0
+    produit = (cfg.outputs_root / "D-777" / "PSEUDO" / "DOSSIER-SOC0001_FEC_2024_PSEUDO.txt").read_text(encoding="cp1252")
+    for mot in ("BENALI", "BOUSSAC", "NEVEU", "TILLEULS", "LEFEBVRE", "DESCHAMPS"):
+        assert mot not in produit.upper(), mot           # parties de noms remplacées en contexte (paie, provisions, comptes courants)
+    assert "VASSEUR" not in produit.upper()            # salarié relevé seulement dans la paie, validé à l'écran de synthèse

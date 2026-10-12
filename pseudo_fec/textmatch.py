@@ -69,27 +69,37 @@ class NameMatcher:
 
     SEP = r"[\W_]{0,6}"   # espaces multiples, tirets, points, apostrophes
 
-    def __init__(self, items: Iterable[tuple[str, Any]]):
-        by_tokens: dict[tuple[str, ...], list[Any]] = {}
-        expanded: list[tuple[str, Any]] = []
-        for text, key in items:
-            expanded.append((text, key))
+    def __init__(self, items: Iterable[tuple]):
+        """items : (texte, clé) ou (texte, clé, rang). Pour un même texte rattaché à plusieurs clés, la clé de
+        rang le plus bas l'emporte ; à rang égal, c'est un conflit (``self.conflicts``)."""
+        by_tokens: dict[tuple[str, ...], dict[Any, int]] = {}
+        expanded: list[tuple[str, Any, int]] = []
+        for it in items:
+            text, key = it[0], it[1]
+            rank = it[2] if len(it) > 2 else 0
+            expanded.append((text, key, rank))
             t2 = fold_text(text)
             for lig, rep in _LIGATURES:       # « ŒUVRES » doit aussi retrouver « OEUVRES »
                 if lig in t2:
                     t2 = t2.replace(lig, rep)
-                    expanded.append((t2, key))
-        for text, key in expanded:
+                    expanded.append((t2, key, rank))
+        for text, key, rank in expanded:
             toks = tuple(tokens(text))
             if not toks or not any(len(t) > 1 or t.isdigit() for t in toks):
                 continue
-            keys = by_tokens.setdefault(toks, [])
-            if key not in keys:
-                keys.append(key)
-        self.conflicts: dict[tuple[str, ...], list[Any]] = {t: k for t, k in by_tokens.items() if len(k) > 1}
+            ranks = by_tokens.setdefault(toks, {})
+            ranks[key] = min(rank, ranks.get(key, rank))
+        self.conflicts: dict[tuple[str, ...], list[Any]] = {}
+        winners: dict[tuple[str, ...], Any] = {}
+        for t, ranks in by_tokens.items():
+            best = min(ranks.values())
+            keys = [k for k, r in ranks.items() if r == best]
+            winners[t] = keys[0]
+            if len(keys) > 1:
+                self.conflicts[t] = keys
         ordered = sorted(by_tokens, key=lambda t: (-sum(len(x) for x in t), t))
         self._variants = ordered
-        self._keys = [by_tokens[t][0] for t in ordered]
+        self._keys = [winners[t] for t in ordered]
         if ordered:
             parts = ["(" + self.SEP.join(re.escape(x) for x in t) + ")" for t in ordered]
             self._rx = re.compile(r"(?<![^\W_])(?:" + "|".join(parts) + r")(?![^\W_])")

@@ -70,6 +70,22 @@ personnes pseudonymisées, entités non cochées, alertes de risque résiduel (s
 Livrés aussi : `CONSIGNE-CLAUDE.txt` à coller avec le FEC et `RAPPORT-PSEUDONYMISATION.txt` (sans aucun nom réel).
 La liste des noms résiduels n'est affichée qu'à l'écran, en local.
 
+## Contextes sensibles et parties identifiantes
+
+Les libellés de **paie**, de **provisions** et de **comptes courants / groupe** citent souvent un nom de façon partielle
+(nom de famille seul, prénom seul, composant d'un nom hyphéné, partie d'une raison sociale). Le contexte est déterminé par
+l'ÉCRITURE entière (journal + numéro) à partir des comptes (paramétrables dans `cabinet.json`, clé `contexts`) : le virement de
+salaire côté banque est donc en contexte de paie.
+
+- **Synthèse à valider** (écran « Noms à valider ») : par type d'écriture, noms relevés / validés / à examiner, libellés les
+  plus fréquents, « Voir » et « Tout valider » par contexte.
+- **Parties identifiantes** : pour chaque nom, ses parties (nom de famille, prénom, composants hyphénés ; pour une société, la
+  partie distinctive d'une raison sociale longue). Portée au choix : « contextes sensibles » (défaut pour les personnes) ou « partout »
+  (défaut pour la partie distinctive d'une société liée, sauf mot courant, trop court ou partagé).
+- **Homonymes** : en contexte de paie le salarié l'emporte sur un fournisseur homonyme ; à priorité égale (holding / associé
+  « DESCHAMPS ») c'est un conflit bloquant à **arbitrer** (attribuer à une entité ou laisser en clair).
+- Un mot isolé relevé en paie, provision ou compte courant et non reconnu est proposé (non coché) : validez-le dans la synthèse.
+
 ## Détection des noms (jalon b)
 
 Les noms candidats viennent, par ordre de fiabilité : de la fiche dossier et de la table, de `CompAuxLib`,

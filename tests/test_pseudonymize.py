@@ -28,7 +28,8 @@ def dossier_pour(fecs, validate_all=True, unchecked=(), societe=True):
     for c in res.candidates:
         checked = (c.checked or (validate_all and c.statut != "liste_blanche")) and c.nom not in unchecked
         rows.append({"uid": c.uid, "nom": c.nom, "cat": c.cat, "checked": checked, "source": c.source, "touched": True,
-                     "variantes": [v for v in c.variants if v not in c.var_risk]})
+                     "variantes": [v for v in c.variants if v not in c.var_risk],
+                     "parties": [{"texte": x["texte"], "portee": x["portee"], "actif": x["actif"]} for x in c.parties]})
     out = apply_validation(p, rows)
     assert not out["conflicts"], out["conflicts"]
     return p

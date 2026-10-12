@@ -210,6 +210,8 @@ def apply_validation(payload: dict[str, Any], rows: list[dict[str, Any]]) -> dic
         if e["source"] == "fiche":
             kept = _clean_list([*e.get("variantes", []), *kept])
         e["variantes"] = [v for v in kept if fold(v) != fold(e["nom"])]
+        if "parties" in row:
+            e["parties"] = _clean_parties(row["parties"])
         e["a_pseudonymiser"] = checked
         if checked and not e["pseudo"]:
             e["pseudo"] = _alloc(payload, e["cat"])
@@ -225,10 +227,57 @@ def apply_validation(payload: dict[str, Any], rows: list[dict[str, Any]]) -> dic
             "bloquant": bool(conflicts)}
 
 
+def _clean_parties(parts: Any) -> list[dict[str, Any]]:
+    out, seen = [], set()
+    for p in parts or []:
+        t = re.sub(r"\s+", " ", str(p.get("texte", ""))).strip()
+        if t and fold(t) not in seen:
+            seen.add(fold(t))
+            out.append({"texte": t, "portee": "partout" if p.get("portee") == "partout" else "contextes",
+                        "actif": bool(p.get("actif"))})
+    return out
+
+
 def entity_conflicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Un même texte rattaché à deux entités : la pseudonymisation serait ambiguë (bloquant)."""
-    from .textmatch import NameMatcher
+    """Un même texte rattaché à deux entités : la pseudonymisation serait ambiguë (bloquant).
+    Contrôlé pour le texte courant ET pour chaque contexte sensible (paie, comptes courants, provisions)."""
+    from .contexts import CONTEXT_LABELS
+    from .pseudonymize import build_matchers
     active = [e for e in payload["entities"] if e.get("a_pseudonymiser") and not e.get("retired")]
-    m = NameMatcher((v, e["uid"]) for e in active for v in {e["nom"], *e.get("variantes", []), *e.get("ids", [])})
     names = {e["uid"]: e["nom"] for e in active}
-    return [{"texte": " ".join(t), "entites": [names[u] for u in uids]} for t, uids in m.conflicts.items()]
+    glob, ctx = build_matchers(active)
+    out = [{"texte": " ".join(t), "entites": [names[u] for u in uids], "uids": list(uids), "contexte": None}
+           for t, uids in glob.conflicts.items()]
+    seen = {c["texte"]: c for c in out}
+    for cx, m in ctx.items():
+        for t, uids in m.conflicts.items():
+            key = " ".join(t)
+            if key in seen and seen[key]["contexte"] is None:
+                continue                                   # déjà bloquant partout
+            label = CONTEXT_LABELS[cx]
+            if key in seen:
+                seen[key]["contexte"] += " ; " + label
+            else:
+                seen[key] = {"texte": key, "entites": [names[u] for u in uids], "uids": list(uids), "contexte": label}
+                out.append(seen[key])
+    return out
+
+
+def arbitrate(payload: dict[str, Any], texte: str, uid: str | None) -> list[dict[str, Any]]:
+    """Attribue un texte ambigu à UNE entité (ou à aucune : laissé en clair) et retourne les conflits restants."""
+    f = fold(texte)
+    for e in payload["entities"]:
+        keep = uid is not None and e["uid"] == uid
+        if keep:
+            parts = e.setdefault("parties", [])
+            hit = next((p for p in parts if fold(p["texte"]) == f), None)
+            if hit:
+                hit["actif"] = True
+            elif not any(fold(v) == f for v in [e["nom"], *e.get("variantes", [])]):
+                parts.append({"texte": texte, "portee": "contextes", "actif": True})
+        else:
+            e["variantes"] = [v for v in e.get("variantes", []) if fold(v) != f]
+            for p in e.get("parties", []):
+                if fold(p["texte"]) == f:
+                    p["actif"] = False
+    return entity_conflicts(payload)

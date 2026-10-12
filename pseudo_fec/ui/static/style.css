@@ -61,3 +61,8 @@ ol{padding-left:20px}
 .item{gap:14px}.item .actions{margin-top:0;flex-wrap:nowrap;flex-shrink:0}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
 textarea.consigne{font-family:Consolas,monospace;font-size:13px;min-height:260px}
+td.todo{color:var(--warn);font-weight:700}
+.pill.ctx{background:var(--bg)}
+.part{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:3px 0}
+select.mini{width:auto;padding:2px 6px;font-size:12px}
+.conf{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}

@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .contexts import DEFAULT_CONTEXTS
 from .errors import PseudoFecError
 
 PREF_KEYS = {"tables_root", "outputs_root", "last_dossier", "idle_timeout_s"}
@@ -25,6 +26,7 @@ DEFAULT_CABINET: dict[str, Any] = {
     "max_fec_mb": 200,
     "versions_keep": 50,
     "lock_timeout_s": 300,
+    "contexts": DEFAULT_CONTEXTS,    # comptes qui définissent les contextes sensibles (paie, comptes courants, provisions)
     "priority_prefixes": {
         "tiers_commerciaux": ["401", "403", "404", "408", "409", "411", "413", "416", "418", "419"],
         "personnel": ["421", "422", "425", "427", "428"],
@@ -106,6 +108,10 @@ class Config:
     def outputs_root(self) -> Path:
         v = self.get("outputs_root")
         return Path(v) if v else Path.home() / "Documents" / "PseudoFEC" / "sorties"
+
+    @property
+    def contexts(self) -> dict[str, list[str]]:
+        return self.cabinet.get("contexts") or DEFAULT_CONTEXTS
 
     @property
     def priority_prefixes(self) -> dict[str, list[str]]:

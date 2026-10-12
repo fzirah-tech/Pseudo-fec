@@ -38,6 +38,8 @@ paiement carte retrait depot versement dépôt virt recu recue reçu
 iban bic swift mandat rum ics bancaire banque agence siege code client fournisseur
 mme mr mlle monsieur madame
 frn cli sal ass grp soc tie siret siren nir email tel
+conges payes paye cp provision provisions depreciation depreciations dotation dotations litige litiges creance creances
+reprise reprises risque risques charges ccp net payer remboursement avance acompte acomptes cca
 """.split())
 
 SALARY_WORDS = set("""
@@ -45,3 +47,13 @@ salaire salaires paie paye bulletin acompte avance net remuneration indemnite in
 note frais notes rtt cp prime primes
 """.split())
 PAYROLL_PREFIXES = {"421", "422", "425", "427", "428", "641", "645", "431", "437"}
+
+# mots génériques d'une raison sociale : ils ne suffisent pas à identifier une société
+GENERIC_COMPANY_WORDS = set("""
+holding groupe group financiere financiers financier immobiliere immobilier immo invest investissement investissements
+participations participation patrimoine patrimoniale gestion conseil services service france europe international
+developpement promotion batiment construction transport distribution commerce industries industrie technologies
+technologie consulting finance capital ventures management media sante medical foncier foncieres societe civile
+associes partenaires partners solutions entreprise entreprises sud nord est ouest centre
+ateliers atelier boulangerie garage cabinet etablissements maison pharmacie restaurant hotel agence bureau boutique magasin
+""".split())

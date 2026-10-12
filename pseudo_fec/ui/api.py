@@ -16,7 +16,7 @@ from pathlib import Path
 from .. import diagnostic
 from ..config import Config
 from ..demo_data import DEMO_STYLES, make_fec
-from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload, set_societe, luhn_ok
+from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, arbitrate, entity_conflicts, new_payload, set_societe, luhn_ok
 from ..fec_io import filename_info
 from ..pseudonymize import output_name, pseudonymize_fec
 from ..reports import consigne_claude, report_text
@@ -67,6 +67,7 @@ class AppState:
                 ("GET", "/api/societe"): self.societe_state,
                 ("POST", "/api/societe/save"): lambda: self.save_societe(data),
                 ("POST", "/api/entities/save"): lambda: self.save_entities(data),
+                ("POST", "/api/entities/arbitrate"): lambda: self.arbitrate(data),
                 ("POST", "/api/whitelist/add"): lambda: self.whitelist_add(data),
                 ("GET", "/api/diagnostic"): self.diagnostic,
                 ("POST", "/api/demo/create"): lambda: self.demo_create(data),
@@ -222,7 +223,8 @@ class AppState:
         if any(rep["bloquant"] for _, rep in self.fecs.values()):
             raise PseudoFecError("Un FEC présente des erreurs bloquantes : corrigez-les avant la détection.")
         res = detect([f for f, _ in self.fecs.values()], s.payload, self.cfg.priority_prefixes,
-                     Whitelist(self.cfg.cabinet.get("whitelist", [])), frozenset(self.detected_sirens()))
+                     Whitelist(self.cfg.cabinet.get("whitelist", [])), frozenset(self.detected_sirens()),
+                     self.cfg.contexts)
         self.detection = res.as_dict()
         return {**self.detection, "conflits_table": entity_conflicts(s.payload), "societe": self.societe_state()}
 
@@ -231,6 +233,13 @@ class AppState:
         out = apply_validation(s.payload, d.get("rows", []))
         s.save(int(self.cfg.get("versions_keep") or 50))
         return out
+
+    def arbitrate(self, d: dict[str, Any]) -> dict[str, Any]:
+        s = self._store()
+        conflicts = arbitrate(s.payload, str(d.get("texte", "")), d.get("uid") or None)
+        s.save(int(self.cfg.get("versions_keep") or 50))
+        self.detection = None
+        return {"conflicts": conflicts}
 
     def whitelist_add(self, d: dict[str, Any]) -> dict[str, Any]:
         s = self._store()
@@ -356,7 +365,7 @@ class AppState:
         cat_of = {e["pseudo"]: e["cat"] for e in p["entities"] if e.get("pseudo")}
         results, produced, files = [], [], []
         for name, (fec, rep) in self.fecs.items():
-            r = pseudonymize_fec(fec, p, s.code, bool(d.get("replace_codes", True)), wl, self.cfg.priority_prefixes)
+            r = pseudonymize_fec(fec, p, s.code, bool(d.get("replace_codes", True)), wl, self.cfg.priority_prefixes, self.cfg.contexts)
             path = self._unique_path(out_dir / output_name(s.code, soc, rep.get("exercice"), name))
             self._write_new(path, r.data)
             r.output_name = path.name
@@ -369,7 +378,7 @@ class AppState:
                 "fichier": path.name, "lignes": r.lignes, "total_debit": r.total_debit, "total_credit": r.total_credit,
                 "remplacements": [{"pseudo": k, "cat": cat_of.get(k, "?"), "nom": nom_of.get(k, ""), "n": n} for k, n in r.remplacements.items()],
                 "sensibles": r.sensibles, "champs": r.champs, "codes": r.codes_remplaces, "non_cochees": r.non_cochees,
-                "alertes": r.alertes, "residuels": r.residuels, "prenoms": r.prenoms})
+                "alertes": r.alertes, "residuels": r.residuels, "prenoms": r.prenoms, "contextes": r.contextes})
         consigne = consigne_claude(p)
         for fname, text in (("CONSIGNE-CLAUDE.txt", consigne), ("RAPPORT-PSEUDONYMISATION.txt", report_text(s.code, produced, p, getpass.getuser()))):
             path = self._unique_path(out_dir / fname)

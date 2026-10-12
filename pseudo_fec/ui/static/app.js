@@ -272,6 +272,7 @@ function newRow(c) {
     variantes: c.variantes.map((v) => ({ ...v })), champs: c.champs, comptes: c.comptes, nb_comptes: c.nb_comptes,
     exemples: c.exemples, occurrences: c.occurrences, notes: c.notes, merge_with: c.merge_with,
     proposees: (c.variantes_proposees || []).map((v) => ({ ...v, coche: v.coche })),
+    contextes: { ...(c.contextes || {}) }, parties: (c.parties || []).map((p) => ({ ...p })),
     absorbed_uids: [], absorbed_keys: [], sel: false, touched: false, open: false };
 }
 function addVariant(t, v) {
@@ -291,6 +292,8 @@ function mergeRows(rows) {
     if (o.uid) t.absorbed_uids.push(o.uid, ...o.absorbed_uids);
     t.absorbed_keys.push(o.key, ...o.absorbed_keys);
     t.notes = [...new Set([...t.notes, ...o.notes])];
+    for (const [k, n] of Object.entries(o.contextes || {})) t.contextes[k] = (t.contextes[k] || 0) + n;
+    o.parties.forEach((p) => { if (!t.parties.find((x) => x.texte.toLowerCase() === p.texte.toLowerCase())) t.parties.push({ ...p, actif: false }); });
   }
   S.rows = S.rows.filter((r) => !rows.slice(1).includes(r)); t.sel = false;
 }
@@ -310,17 +313,27 @@ function mergeGroups() {  // composantes connexes du graphe des fusions proposé
   return groups;
 }
 
+function conflictsPanel(conflicts, after) {
+  return h("div", { class: "msg err" }, h("strong", {}, "Homonymes à arbitrer avant pseudonymisation : "), "un même texte pourrait désigner plusieurs entités.",
+    conflicts.map((c) => h("div", { class: "conf" }, h("span", {}, "« " + c.texte + " »" + (c.contexte ? " (" + c.contexte + ")" : "") + " : "),
+      (c.uids || []).map((uid, i) => h("button", { class: "small", onclick: async () => { await api("POST", "/api/entities/arbitrate", { texte: c.texte, uid }); await after(); } }, "→ " + c.entites[i])),
+      h("button", { class: "ghost small", onclick: async () => { await api("POST", "/api/entities/arbitrate", { texte: c.texte, uid: null }); await after(); } }, "laisser en clair"))));
+}
+
+
 async function renderNoms() {
   const box = h("div"), body = h("div");
-  const F = S.f = S.f || { q: "", cat: "", statut: "", conf: "", coche: "", weak: false, page: 0 };
+  const F = S.f = S.f || { q: "", cat: "", statut: "", conf: "", coche: "", ctx: "", weak: false, page: 0 };
   async function detect() {
     box.replaceChildren(h("p", { class: "muted" }, "Détection en cours…"));
     try { S.det = await api("POST", "/api/detect", {}); S.rows = S.det.candidats.map(newRow); box.replaceChildren(); draw(); }
     catch (e) { box.replaceChildren(msg("err", e.message)); }
   }
   const visible = () => S.rows.filter((r) => {
-    if (!F.weak && r.confiance === "faible" && r.statut !== "connu" && !r.touched) return false;
+    if (!F.weak && r.confiance === "faible" && r.statut !== "connu" && !r.touched && !["paie", "compte_courant", "provisions"].includes(F.ctx)) return false;
     if (F.cat && r.cat !== F.cat) return false;
+    if (F.ctx === "comptes" && !["aux", "compte"].includes(r.source)) return false;
+    if (F.ctx && F.ctx !== "comptes" && !(r.contextes && r.contextes[F.ctx] > 0)) return false;
     if (F.statut && r.statut !== F.statut) return false;
     if (F.conf && r.confiance !== F.conf) return false;
     if (F.coche === "oui" && !r.checked) return false;
@@ -341,18 +354,23 @@ async function renderNoms() {
       r.statut === "liste_blanche" && h("span", { class: "pill warn" }, "liste blanche"),
       r.statut === "connu" && h("span", { class: "pill ok" }, r.pseudo || "connu"),
       r.source === "libelle" && h("span", { class: "pill " + (r.confiance === "haute" ? "ok" : r.confiance === "moyenne" ? "warn" : "") }, "confiance " + r.confiance),
-      r.merge_with.length > 0 && h("span", { class: "pill warn" }, "fusion proposée")];
+      r.merge_with.length > 0 && h("span", { class: "pill warn" }, "fusion proposée"),
+      ...Object.entries(r.contextes || {}).filter(([k, n]) => k !== "autres" && n > 0).map(([k, n]) => h("span", { class: "pill ctx" }, (CTX.find((c) => c[0] === k) || [k, k])[1].split(" ")[0].toLowerCase() + " ×" + n))];
     const det = h("div", { class: "ndetail" },
       r.variantes.length > 0 && h("div", {}, h("strong", {}, "Variantes d'écriture (cochées = recherchées partout) :"),
         r.variantes.map((v) => { const c = h("input", { type: "checkbox", checked: v.coche }); c.addEventListener("change", () => { v.coche = c.checked; r.touched = true; });
           return h("label", { class: "var" }, c, " ", v.texte, " ", h("span", { class: "muted" }, "(" + v.n + " · " + v.origine + (v.risque ? " · risque d'homonymie" : "") + ")")); })),
-      r.proposees.length > 0 && h("div", {}, h("strong", {}, "Écritures possibles de ce nom (à cocher pour les inclure) :"),
-        r.proposees.map((v) => { const c = h("input", { type: "checkbox", checked: v.coche }); c.addEventListener("change", () => {
-            v.coche = c.checked; r.touched = true;
-            if (c.checked) addVariant(r, { texte: v.texte, n: v.n, origine: "variante proposée", risque: v.risque, coche: true });
-            else r.variantes = r.variantes.filter((x) => x.texte !== v.texte);
-          });
-          return h("label", { class: "var" }, c, " ", v.texte, " ", h("span", { class: "muted" }, "(" + v.n + (v.risque ? " · risque d'homonymie" : "") + ")")); })),
+      r.parties.length > 0 && h("div", {}, h("strong", {}, "Parties identifiantes du nom (cochées = pseudonymisées aussi) :"),
+        h("div", { class: "muted" }, "« Contextes sensibles » : uniquement dans les écritures de paie, de provisions et de comptes courants/groupe. « Partout » : dans tous les libellés."),
+        r.parties.map((p) => {
+          const c = h("input", { type: "checkbox", checked: p.actif }); c.addEventListener("change", () => { p.actif = c.checked; r.touched = true; });
+          const po = h("select", { class: "mini" }, h("option", { value: "contextes", selected: p.portee !== "partout" }, "Contextes sensibles"), h("option", { value: "partout", selected: p.portee === "partout" }, "Partout"));
+          po.addEventListener("change", () => { p.portee = po.value; r.touched = true; });
+          const where = Object.entries(p.ctx || {}).filter(([, n]) => n > 0).map(([k, n]) => k.replace("_", " ") + " " + n).join(", ");
+          return h("div", { class: "part" }, h("label", { class: "var" }, c, " ", h("strong", {}, p.texte), " ", h("span", { class: "muted" }, "(" + p.kind + ")")), po,
+            h("span", { class: "muted" }, " " + fmtI(p.n) + " occurrence(s)" + (where ? " · " + where : "")),
+            (p.risque || []).map((x) => h("span", { class: "pill warn" }, x)), p.partage_avec && h("span", { class: "muted" }, " ↔ " + p.partage_avec.join(", ")));
+        })),
       r.exemples.length > 0 && h("div", {}, h("strong", {}, "Exemples (affichés en local uniquement) :"), r.exemples.map((x) => h("div", { class: "ex" }, x))),
       h("div", { class: "muted" }, "Champs : " + Object.entries(r.champs).map(([k, v]) => k + " " + v).join(", ") + (r.comptes.length ? " · Comptes : " + r.comptes.join(", ") + (r.nb_comptes > r.comptes.length ? "…" : "") : "")),
       r.notes.filter((n) => !n.startsWith("forme")).map((n) => h("div", { class: "msg warn" }, n)));
@@ -380,6 +398,7 @@ async function renderNoms() {
     const manNom = h("input", { placeholder: "Nom à ajouter (ex. Jean DUPONT)" }), manCat = h("select", {}, ...CAT_ORDER.filter((c) => c !== "SOC").map((c) => h("option", { value: c }, c + " · " + S.state.categories[c])));
     put(body,
       societeCard(dr),
+      syntheseCard(dr),
       dr.conflits.length > 0 && h("div", { class: "msg err" }, h("strong", {}, "Conflits à résoudre avant pseudonymisation : "), "un même texte est rattaché à deux entités — ",
         dr.conflits.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; "), ". Décochez une variante ou fusionnez les entités."),
       dr.sensibles.total > 0 && h("div", { class: "card" }, h("strong", {}, "Motifs sensibles détectés (remplacés par des jetons neutres, non réversibles) : "),
@@ -389,7 +408,8 @@ async function renderNoms() {
         h("button", { class: "small", onclick: () => { groups.forEach(mergeRows); draw(); } }, "Appliquer tous les regroupements"), " Vous pouvez aussi fusionner à la main."),
       h("div", { class: "card" }, S.statEl,
         h("div", { class: "filters" }, q, sel([["", "Toutes catégories"], ...CAT_ORDER.map((c) => [c, c])], "cat", ""), sel([["", "Tous statuts"], ["nouveau", "Nouveaux"], ["connu", "Connus"], ["liste_blanche", "Liste blanche"]], "statut", ""),
-          sel([["", "Toute confiance"], ["haute", "Haute"], ["moyenne", "Moyenne"], ["faible", "Faible"]], "conf", ""), sel([["", "Cochés ou non"], ["oui", "Cochés"], ["non", "Non cochés"]], "coche", ""),
+          sel([["", "Toute confiance"], ["haute", "Haute"], ["moyenne", "Moyenne"], ["faible", "Faible"]], "conf", ""),
+          sel([["", "Tous les contextes"], ["comptes", "Dans les comptes"], ["paie", "Paie"], ["compte_courant", "Comptes courants / groupe"], ["provisions", "Provisions"], ["autres", "Autres libellés"]], "ctx", ""), sel([["", "Cochés ou non"], ["oui", "Cochés"], ["non", "Non cochés"]], "coche", ""),
           h("label", { class: "flt" }, wk, " afficher les propositions peu fiables")),
         h("div", { class: "actions" },
           h("button", { class: "ghost small", onclick: () => { vis.forEach((r) => { r.checked = true; r.touched = r.touched || !r.defaultChecked; }); draw(); } }, "Cocher les " + vis.length + " affichés"),
@@ -414,6 +434,31 @@ async function renderNoms() {
     for (const r of sel) { try { await api("POST", "/api/whitelist/add", { nom: r.nom }); r.statut = "liste_blanche"; r.checked = false; r.touched = true; r.sel = false; } catch (e) { box.append(msg("err", e.message)); } }
     draw();
   }
+  const CTX = [["paie", "Libellés de paie"], ["compte_courant", "Comptes courants et groupe"], ["provisions", "Provisions"], ["autres", "Autres libellés (banque, achats, ventes…)"]];
+  function syntheseCard(dr) {
+    const rows = S.rows.filter((r) => r.statut !== "liste_blanche");
+    const lignes = Object.fromEntries(((dr.synthese && dr.synthese.contextes) || []).map((x) => [x.id, x]));
+    const SENS = ["paie", "compte_courant", "provisions"];
+    const line = (label, pred, info, ctxKey) => {
+      const found = rows.filter(pred), ok = found.filter((r) => r.checked);
+      // dans une écriture sensible, un mot isolé non reconnu est probablement un nom : on le compte même s'il est peu fiable
+      const todo = found.filter((r) => !r.checked && (r.confiance !== "faible" || SENS.includes(ctxKey)));
+      const ex = ((lignes[ctxKey] || {}).exemples || []);
+      return h("tr", {}, h("th", {}, label, ex.length > 0 && h("details", {}, h("summary", { class: "muted" }, "libellés les plus fréquents"),
+          ex.map((x) => h("div", { class: "ex" }, x.texte + "  (" + fmtI(x.n) + ")")))), h("td", { class: "num" }, info), h("td", { class: "num" }, found.length), h("td", { class: "num" }, ok.length),
+        h("td", { class: "num" + (todo.length ? " todo" : "") }, todo.length),
+        h("td", {}, h("button", { class: "ghost small", onclick: () => { F.ctx = ctxKey; F.coche = ""; F.page = 0; draw(); } }, "Voir"), " ",
+          todo.length > 0 && h("button", { class: "ghost small", onclick: () => { todo.forEach((r) => { r.checked = true; r.touched = true; }); draw(); } }, "Tout valider")));
+    };
+    const all = rows.filter((r) => !r.checked && (r.confiance !== "faible" || Object.keys(r.contextes || {}).some((k) => k !== "autres" && r.contextes[k] > 0))).length;
+    return h("div", { class: "card" }, h("strong", {}, "Synthèse des noms relevés, à valider"),
+      h("p", { class: "muted" }, "L'outil relève les noms dans les comptes puis dans les libellés d'écritures, par type d'écriture. Les écritures de paie, de provisions et de comptes courants citent souvent un nom partiel (nom de famille seul, prénom, partie d'une raison sociale) : vérifiez chaque ligne avant de pseudonymiser."),
+      h("table", {}, h("thead", {}, h("tr", {}, ["Où", "Lignes", "Noms relevés", "Validés", "À examiner", ""].map((x) => h("th", {}, x)))),
+        h("tbody", {}, line("Dans les comptes (CompAuxLib, CompteLib)", (r) => ["aux", "compte"].includes(r.source), "—", "comptes"),
+          ...CTX.map(([id, label]) => line(label, (r) => r.contextes && r.contextes[id] > 0, lignes[id] ? fmtI(lignes[id].lignes) : "—", id)))),
+      h("p", { class: all ? "msg warn" : "msg ok" }, all ? all + " nom(s) relevé(s) restent à examiner (non cochés) avant de pseudonymiser." : "Tous les noms relevés ont été examinés."));
+  }
+
   function societeCard(dr) {
     const so = dr.societe, sug = (dr.stats && dr.stats.societe_suggestions) || [], out = h("div");
     const rs = h("input", { value: so.raison_sociale, placeholder: "Raison sociale exacte", id: "soc-rs" });
@@ -456,13 +501,14 @@ async function renderNoms() {
   async function save() {
     const rows = S.rows.filter((r) => r.checked || r.touched || ["aux", "compte", "fiche", "table", "manuel"].includes(r.source)).map((r) => ({
       uid: r.uid, nom: r.nom, cat: r.cat, checked: r.checked, source: r.source, touched: r.touched,
-      variantes: r.variantes.filter((v) => v.coche).map((v) => v.texte), absorbed_uids: r.absorbed_uids }));
+      variantes: r.variantes.filter((v) => v.coche).map((v) => v.texte), absorbed_uids: r.absorbed_uids,
+      parties: r.parties.map((p) => ({ texte: p.texte, portee: p.portee, actif: p.actif })) }));
     box.replaceChildren();
     try {
       const out = await api("POST", "/api/entities/save", { rows });
       box.append(msg(out.bloquant ? "err" : "ok", out.a_pseudonymiser + " entité(s) à pseudonymiser enregistrée(s) dans la table chiffrée (" + out.created + " créée(s), " + out.updated + " mise(s) à jour)."));
       out.warnings.forEach((w) => box.append(msg("warn", w)));
-      if (out.conflicts.length) box.append(msg("err", "Conflits : " + out.conflicts.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; ")));
+      if (out.conflicts.length) box.append(conflictsPanel(out.conflicts, detectQuiet));
       else box.append(h("div", { class: "actions" }, h("button", { onclick: () => go("pseudo") }, "Continuer : pseudonymiser le FEC →")));
       await detectQuiet();
     } catch (e) { box.append(msg("err", e.message)); }
@@ -507,6 +553,7 @@ async function renderPseudo() {
     return h("div", { class: "card" },
       h("div", { class: "item" }, h("strong", {}, r.fichier), h("span", { class: "pill ok" }, "contrôles bloquants passés")),
       h("p", {}, fmtI(r.lignes) + " lignes · débit " + fmtN(r.total_debit) + " = crédit " + fmtN(r.total_credit) + " : identiques à la source."),
+      Object.keys(r.contextes || {}).length > 0 && h("p", { class: "muted" }, "Remplacements dans les écritures sensibles : " + Object.entries(r.contextes).map(([k, v]) => k.replace("_", " ") + " " + fmtI(v)).join(" · ")),
       h("p", { class: "muted" }, "Cellules modifiées : " + (Object.entries(r.champs).map(([k, v]) => k + " " + fmtI(v)).join(" · ") || "aucune")
         + (Object.keys(r.codes).length ? " · numéros de compte remplacés : " + Object.entries(r.codes).map(([k, v]) => k + " " + fmtI(v)).join(", ") : "")
         + (Object.keys(r.sensibles).length ? " · motifs sensibles : " + Object.entries(r.sensibles).map(([k, v]) => k + " " + fmtI(v)).join(", ") : "")),
@@ -540,6 +587,7 @@ async function renderPseudo() {
     h("p", { class: "muted" }, "Crée un NOUVEAU fichier par exercice, dans un dossier dédié, avec les noms remplacés par des pseudonymes (CAT-0000). Le FEC source n'est jamais modifié. Les montants, dates, codes journaux, numéros d'écritures et lettrages restent identiques."),
     h("div", { class: "card" },
       st.blocages.map((b) => msg("err", b)), st.notes.map((n) => msg("warn", n)),
+      st.conflits.length > 0 && conflictsPanel(st.conflits, async () => { main.replaceChildren(); await renderPseudo(); }),
       h("p", {}, h("strong", {}, st.n_fec + " FEC"), " (exercices : " + (st.exercices.filter(Boolean).join(", ") || "?") + ") · ", h("strong", {}, st.n_entites + " entité(s)"), " à pseudonymiser · sortie : " + st.dossier_sortie),
       h("label", { class: "flt" }, repl, " Remplacer par un code neutre les numéros de compte qui contiennent un nom (recommandé)"),
       h("div", { class: "actions" }, run, h("button", { class: "ghost", onclick: () => go("noms") }, "← Revenir à la validation des noms"))),

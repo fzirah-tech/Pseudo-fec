@@ -47,9 +47,17 @@ def test_parcours_navigateur(cfg, tmp_path):
             assert "SOC-0001" in pg.locator("main").inner_text()
             assert "à pseudonymiser" in pg.locator("#stat").inner_text()
             assert "false" not in pg.locator("main").inner_text()
+            # synthèse des noms relevés, par type d'écriture
+            pw.expect(pg.locator("text=Synthèse des noms relevés, à valider")).to_be_visible()
+            for libelle in ("Libellés de paie", "Comptes courants et groupe", "Provisions"):
+                pw.expect(pg.locator("td, th", has_text=libelle).first).to_be_visible()
+            pg.locator("tr", has_text="Libellés de paie").get_by_text("Voir").click()
+            assert pg.locator(".nrow").count() >= 3
             pg.click("text=Appliquer tous les regroupements")
             pg.fill("input[type=search]", "benali")
             pw.expect(pg.locator(".nrow")).to_have_count(1)   # « Karim BENALI » et « BENALI Karim » fusionnés
+            pg.locator("summary", has_text="Détails").first.click()
+            pw.expect(pg.locator("text=Parties identifiantes du nom").first).to_be_visible()
             pg.fill("input[type=search]", "")
             pw.expect(pg.locator(".nrow")).not_to_have_count(1)
             pg.click("text=Enregistrer les décisions")
