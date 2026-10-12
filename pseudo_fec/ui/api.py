@@ -8,13 +8,18 @@ import urllib.parse
 from typing import Any
 
 from .. import __version__, mapping
+import getpass
 import os
+import datetime as dt
+from pathlib import Path
 
 from .. import diagnostic
 from ..config import Config
 from ..demo_data import DEMO_STYLES, make_fec
 from ..dossier import LIENS, ROLES, apply_fiche, apply_validation, entity_conflicts, new_payload, set_societe, luhn_ok
 from ..fec_io import filename_info
+from ..pseudonymize import output_name, pseudonymize_fec
+from ..reports import consigne_claude, report_text
 from ..detection import CATS, detect
 from ..generic_list import Whitelist, add_entry
 from ..errors import DossierError, PseudoFecError, TableError
@@ -67,6 +72,8 @@ class AppState:
                 ("POST", "/api/demo/create"): lambda: self.demo_create(data),
                 ("GET", "/api/demo/fec"): lambda: self.demo_fec(query),
                 ("POST", "/api/open-folder"): lambda: self.open_folder(data),
+                ("GET", "/api/pseudo/status"): self.pseudo_status,
+                ("POST", "/api/pseudo/run"): lambda: self.pseudo_run(data),
                 ("POST", "/api/quit"): lambda: {"_quit": True},
             }
             fn = routes.get((method, path))
@@ -85,6 +92,7 @@ class AppState:
             "tables_root": str(root), "outputs_root": str(self.cfg.outputs_root),
             "max_fec_mb": self.cfg.get("max_fec_mb"),
             "liens": LIENS, "roles": ROLES, "categories": CATS, "n_fec": len(self.fecs),
+            "n_a_pseudonymiser": sum(1 for e in self.store.payload["entities"] if e.get("a_pseudonymiser") and not e.get("retired")) if self.store else 0,
         }
 
     def _need_pass(self) -> str:
@@ -270,7 +278,10 @@ class AppState:
 
     def open_folder(self, d: dict[str, Any]) -> dict[str, Any]:
         which = d.get("which")
-        path = {"tables": self.cfg.tables_root, "outputs": self.cfg.outputs_root}.get(which)
+        paths = {"tables": self.cfg.tables_root, "outputs": self.cfg.outputs_root}
+        if self.store:
+            paths["pseudo"] = self.cfg.outputs_root / self.store.code / "PSEUDO"
+        path = paths.get(which)
         if path is None:
             raise PseudoFecError("Dossier inconnu.")
         path.mkdir(parents=True, exist_ok=True)
@@ -278,3 +289,91 @@ class AppState:
             os.startfile(str(path))  # type: ignore[attr-defined]  # Windows : ouvre l'Explorateur
             return {"ok": True, "message": "Dossier ouvert dans l'Explorateur."}
         return {"ok": False, "message": "Ouverture automatique disponible sous Windows : " + diagnostic.mask(path)}
+
+    # ------------------------------------------------------------ pseudonymisation (jalon c)
+    def pseudo_dir(self) -> Path:
+        return self.cfg.outputs_root / self._store().code / "PSEUDO"
+
+    def pseudo_status(self) -> dict[str, Any]:
+        s = self._store()
+        p = s.payload
+        conflicts = entity_conflicts(p)
+        n_ent = sum(1 for e in p["entities"] if e.get("a_pseudonymiser") and not e.get("retired"))
+        soc = self.societe_state()
+        blocks, notes = [], []
+        if not self.fecs:
+            blocks.append("Aucun FEC importé : retournez à l'étape « Import du FEC ».")
+        if any(rep["bloquant"] for _, rep in self.fecs.values()):
+            blocks.append("Un FEC présente des erreurs bloquantes.")
+        if n_ent == 0:
+            blocks.append("Aucune entité à pseudonymiser : validez d'abord les noms et cliquez sur « Enregistrer les décisions ».")
+        if conflicts:
+            blocks.append("Des conflits de variantes subsistent (même texte rattaché à deux entités) : résolvez-les à l'étape « Noms à valider ».")
+        if not soc["pseudo"]:
+            notes.append("La société n'est pas identifiée : sa raison sociale ne sera pas remplacée.")
+        if 0 < n_ent <= (1 if soc["pseudo"] else 0):
+            notes.append("Seule la société est validée : les clients, fournisseurs, salariés et associés resteront en clair. "
+                         "Validez-les à l'étape « Noms à valider ».")
+        return {"pret": not blocks, "blocages": blocks, "notes": notes, "n_entites": n_ent, "n_fec": len(self.fecs),
+                "exercices": [rep.get("exercice") for _, rep in self.fecs.values()], "conflits": conflicts,
+                "dossier_sortie": diagnostic.mask(self.pseudo_dir())}
+
+    @staticmethod
+    def _unique_path(path: Path) -> Path:
+        if not path.exists():
+            return path
+        n = 2
+        while True:
+            cand = path.with_name(f"{path.stem}_v{n}{path.suffix}")
+            if not cand.exists():
+                return cand
+            n += 1
+
+    @staticmethod
+    def _write_new(path: Path, data: bytes) -> None:
+        tmp = path.with_name(path.name + ".part")
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+    def pseudo_run(self, d: dict[str, Any]) -> dict[str, Any]:
+        s = self._store()
+        st = self.pseudo_status()
+        if not st["pret"]:
+            raise PseudoFecError(st["blocages"][0])
+        p = s.payload
+        out_dir = self.pseudo_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        wl = Whitelist(self.cfg.cabinet.get("whitelist", []))
+        soc = next((e["pseudo"] for e in p["entities"] if e["cat"] == "SOC" and e.get("pseudo") and not e.get("retired")), None)
+        nom_of = {e["pseudo"]: e["nom"] for e in p["entities"] if e.get("pseudo")}
+        cat_of = {e["pseudo"]: e["cat"] for e in p["entities"] if e.get("pseudo")}
+        results, produced, files = [], [], []
+        for name, (fec, rep) in self.fecs.items():
+            r = pseudonymize_fec(fec, p, s.code, bool(d.get("replace_codes", True)), wl, self.cfg.priority_prefixes)
+            path = self._unique_path(out_dir / output_name(s.code, soc, rep.get("exercice"), name))
+            self._write_new(path, r.data)
+            r.output_name = path.name
+            produced.append((path.name, r))
+            files.append(path.name)
+            p["fec"].append({"date": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                             "utilisateur": getpass.getuser(), "sortie": path.name, "sha256_entree": r.sha256_entree,
+                             "sha256_sortie": r.sha256_sortie, "lignes": r.lignes, "remplacements": sum(r.remplacements.values())})
+            results.append({
+                "fichier": path.name, "lignes": r.lignes, "total_debit": r.total_debit, "total_credit": r.total_credit,
+                "remplacements": [{"pseudo": k, "cat": cat_of.get(k, "?"), "nom": nom_of.get(k, ""), "n": n} for k, n in r.remplacements.items()],
+                "sensibles": r.sensibles, "champs": r.champs, "codes": r.codes_remplaces, "non_cochees": r.non_cochees,
+                "alertes": r.alertes, "residuels": r.residuels, "prenoms": r.prenoms})
+        consigne = consigne_claude(p)
+        for fname, text in (("CONSIGNE-CLAUDE.txt", consigne), ("RAPPORT-PSEUDONYMISATION.txt", report_text(s.code, produced, p, getpass.getuser()))):
+            path = self._unique_path(out_dir / fname)
+            self._write_new(path, text.encode("utf-8"))
+            files.append(path.name)
+        s.save(int(self.cfg.get("versions_keep") or 50))
+        return {"resultats": results, "consigne": consigne, "dossier_sortie": diagnostic.mask(out_dir), "fichiers": files}

@@ -347,3 +347,70 @@ def test_demo_sans_aucune_saisie_prealable(app):
     assert so["raison_sociale"] == "" and so["siren"] == SIREN
     det = app.req("POST", "/api/detect", {})[1]
     assert det["societe"]["pseudo"] is None and det["stats"]["societe_suggestions"]
+
+
+
+# ---------------------------------------------------------------- jalon (c) : pseudonymisation via l'application
+
+def _valider_tout(app):
+    det = app.req("POST", "/api/detect", {})[1]
+    rows = [{"nom": c["nom"], "cat": c["cat"], "checked": c["checked"] or c["statut"] != "liste_blanche", "uid": c["uid"],
+             "source": c["source"], "touched": True, "variantes": [v["texte"] for v in c["variantes"] if v["coche"]]} for c in det["candidats"]]
+    out = app.req("POST", "/api/entities/save", {"rows": rows})[1]
+    assert not out["bloquant"], out
+    return out
+
+
+def test_pseudonymisation_ecrit_des_fichiers_neufs_dans_un_dossier_dedie(app, cfg):
+    s, rep = _sans_fiche(app)
+    st = app.req("GET", "/api/pseudo/status")[1]
+    assert not st["pret"] and "validez" in st["blocages"][0].lower()          # rien n'est validé : bouton bloqué avec explication
+    assert app.req("POST", "/api/pseudo/run", {})[0] == 400
+    app.req("POST", "/api/societe/save", {"raison_sociale": "ATELIERS DU PORT SAS", "siren": SIREN})
+    st = app.req("GET", "/api/pseudo/status")[1]
+    assert st["pret"] and any("Seule la société" in n for n in st["notes"])   # prévenu : les tiers resteraient en clair
+    _valider_tout(app)
+    st = app.req("GET", "/api/pseudo/status")[1]
+    assert st["pret"] and st["n_entites"] > 5
+    status, out = app.req("POST", "/api/pseudo/run", {"replace_codes": True})
+    assert status == 200, out
+    folder = cfg.outputs_root / "D-777" / "PSEUDO"
+    names = sorted(f.name for f in folder.iterdir())
+    assert "DOSSIER-SOC0001_FEC_2024_PSEUDO.txt" in names and "CONSIGNE-CLAUDE.txt" in names and "RAPPORT-PSEUDONYMISATION.txt" in names
+    assert not [n for n in names if n.endswith(".part")]                                    # aucun fichier temporaire résiduel
+    for n in names:
+        assert SIREN not in n and not any(x.lower().replace(" ", "") in n.lower() for x in ("DUPONT", "MARTINEZ"))
+    produit = (folder / "DOSSIER-SOC0001_FEC_2024_PSEUDO.txt").read_bytes()
+    assert produit != s.data and b"JournalCode" in produit
+    for n in REAL_NAMES:
+        for enc in ("cp1252", "utf-8"):
+            for f in folder.iterdir():
+                assert n.encode(enc, "ignore") not in f.read_bytes(), (n, f.name)          # produits, consigne et rapport sans nom réel
+    # relance : jamais d'écrasement
+    status, out2 = app.req("POST", "/api/pseudo/run", {})
+    assert status == 200 and "DOSSIER-SOC0001_FEC_2024_PSEUDO_v2.txt" in out2["fichiers"]
+    # le FEC source en mémoire n'est pas modifié ; la table garde la trace (empreintes) sans nom de fichier réel
+    r0 = out["resultats"][0]
+    assert r0["lignes"] == s.n_lines and any(x["pseudo"] == "SOC-0001" for x in r0["remplacements"])
+    from pseudo_fec import mapping
+    t = mapping.TableStore.open(cfg.tables_root, "D-777", TEST_PASS)
+    assert len(t.payload["fec"]) == 2 and all(len(x["sha256_sortie"]) == 64 and SIREN not in x["sortie"] for x in t.payload["fec"])
+
+
+def test_pseudonymisation_refusee_en_cas_de_conflit(app):
+    _sans_fiche(app)
+    app.req("POST", "/api/entities/save", {"rows": [
+        {"nom": "MARTIN", "cat": "FRN", "checked": True, "source": "manuel", "touched": True, "variantes": []},
+        {"nom": "Sophie MARTIN", "cat": "SAL", "checked": True, "source": "manuel", "touched": True, "variantes": ["MARTIN"]}]})
+    st = app.req("GET", "/api/pseudo/status")[1]
+    assert not st["pret"] and st["conflits"] and app.req("POST", "/api/pseudo/run", {})[0] == 400
+
+
+def test_demo_jusqu_a_la_pseudonymisation(app, cfg):
+    app.req("POST", "/api/unlock", {"passphrase": TEST_PASS, "confirm": TEST_PASS})
+    app.req("POST", "/api/demo/create", {"style": "pennylane"})
+    app.req("POST", "/api/societe/save", {"raison_sociale": "ATELIERS DU PORT SAS", "siren": SIREN})
+    _valider_tout(app)
+    st, out = app.req("POST", "/api/pseudo/run", {})
+    assert st == 200 and len(out["resultats"]) == 2 and "CAT-0000" in out["consigne"]
+    assert app.req("POST", "/api/open-folder", {"which": "pseudo"})[0] == 200

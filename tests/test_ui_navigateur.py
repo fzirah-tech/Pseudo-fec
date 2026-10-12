@@ -54,6 +54,17 @@ def test_parcours_navigateur(cfg, tmp_path):
             pw.expect(pg.locator(".nrow")).not_to_have_count(1)
             pg.click("text=Enregistrer les décisions")
             pg.wait_for_selector("text=enregistrée(s) dans la table chiffrée", timeout=20000)
+            # jalon (c) : l'étape « Pseudonymisation » est accessible après l'enregistrement
+            pw.expect(pg.locator("button.step", has_text="4 · Pseudonymisation")).to_be_enabled()
+            pg.click("text=Continuer : pseudonymiser le FEC")
+            pg.wait_for_selector("h1:has-text('Pseudonymisation du FEC')")
+            pw.expect(pg.locator("#btn-pseudo")).to_be_enabled()
+            pg.click("#btn-pseudo")
+            pw.expect(pg.locator("text=fichier(s) pseudonymisé(s) dans")).to_be_visible(timeout=30000)
+            pw.expect(pg.locator("text=contrôles bloquants passés")).to_be_visible()
+            pw.expect(pg.locator("text=Consigne à coller dans Claude")).to_be_visible()
+            assert "CAT-0000" in pg.locator("textarea.consigne").input_value()
+            assert "false" not in pg.locator("main").inner_text()
             b.close()
     finally:
         srv.shutdown()

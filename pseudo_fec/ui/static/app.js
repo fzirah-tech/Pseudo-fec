@@ -38,7 +38,7 @@ const STEPS = [
   ["home", "1 · Accueil"], ["fec", "2 · Import du FEC"], ["noms", "3 · Noms à valider"],
   ["pseudo", "4 · Pseudonymisation"], ["texte", "5 · Texte libre"], ["reid", "6 · Ré-identification"],
 ];
-const AVAILABLE = new Set(["home", "fiche", "fec", "noms"]);
+const AVAILABLE = new Set(["home", "fiche", "fec", "noms", "pseudo"]);
 
 function renderSteps() {
   const nav = document.getElementById("steps");
@@ -68,6 +68,7 @@ async function render() {
     if (S.view === "home" || !S.state.dossier) { S.view = "home"; renderSteps(); return await renderHome(); }
     if (S.view === "fec") return await renderFec();
     if (S.view === "noms") return await renderNoms();
+    if (S.view === "pseudo") return await renderPseudo();
   } catch (e) { main.append(msg("err", e.message)); }
 }
 
@@ -257,7 +258,7 @@ async function renderFec() {
     h("p", { class: "muted" }, "Plusieurs exercices d'un même dossier peuvent être importés : ils partageront la même table de pseudonymes."),
     drop, input, box, list,
     h("div", { class: "actions" }, next),
-    h("p", { class: "msg warn" }, "Étapes suivantes (pseudonymisation du FEC, texte libre, ré-identification) : prochains jalons."));
+    h("p", { class: "msg warn" }, "À venir : pseudonymisation de texte libre et ré-identification des restitutions."));
 }
 
 // ------------------------------------------------------------------ noms à valider
@@ -462,6 +463,7 @@ async function renderNoms() {
       box.append(msg(out.bloquant ? "err" : "ok", out.a_pseudonymiser + " entité(s) à pseudonymiser enregistrée(s) dans la table chiffrée (" + out.created + " créée(s), " + out.updated + " mise(s) à jour)."));
       out.warnings.forEach((w) => box.append(msg("warn", w)));
       if (out.conflicts.length) box.append(msg("err", "Conflits : " + out.conflicts.map((c) => "« " + c.texte + " » (" + c.entites.join(" / ") + ")").join(" ; ")));
+      else box.append(h("div", { class: "actions" }, h("button", { onclick: () => go("pseudo") }, "Continuer : pseudonymiser le FEC →")));
       await detectQuiet();
     } catch (e) { box.append(msg("err", e.message)); }
   }
@@ -478,6 +480,70 @@ async function renderNoms() {
     h("p", { class: "muted" }, "Un dirigeant, un associé ou une société liée que le FEC ne révèle pas ? ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); go("fiche"); } }, "Ajoutez-les à l'avance"), " ou utilisez « Ajout manuel » en bas de page."),
     box, body);
   if (S.det && S.rows) draw(); else await detect();
+}
+
+// ------------------------------------------------------------------ pseudonymisation
+async function renderPseudo() {
+  await refresh();
+  const st = await api("GET", "/api/pseudo/status");
+  const box = h("div"), res = h("div");
+  const repl = h("input", { type: "checkbox", checked: true, id: "repl-codes" });
+  const run = h("button", { id: "btn-pseudo", disabled: !st.pret }, "Pseudonymiser " + st.n_fec + " FEC");
+
+  async function addResid(x, cat, btn) {
+    try {
+      await api("POST", "/api/entities/save", { rows: [{ nom: x.texte, cat, checked: true, source: "manuel", touched: true, variantes: [] }] });
+      btn.textContent = "Ajouté ✓ — relancez la pseudonymisation"; btn.disabled = true; S.det = null; S.rows = null;
+    } catch (e) { box.append(msg("err", e.message)); }
+  }
+  const lvl = { erreur: "err", avertissement: "warn", info: "ok" };
+  function fileCard(r) {
+    const resid = r.residuels.length > 0 && h("details", { open: true }, h("summary", {}, r.residuels.length + " nom(s) propre(s) potentiel(s) restant(s) — à examiner (affichage local)"),
+      h("table", {}, h("tbody", {}, r.residuels.map((x) => {
+        const sel = h("select", {}, ...Object.entries(S.state.categories).filter(([k]) => k !== "SOC").map(([k, v]) => h("option", { value: k, selected: k === "TIE" }, k + " · " + v)));
+        const btn = h("button", { class: "small ghost" }, "Ajouter à pseudonymiser"); btn.addEventListener("click", () => addResid(x, sel.value, btn));
+        return h("tr", {}, h("td", {}, x.texte), h("td", { class: "num" }, x.occurrences), h("td", {}, x.confiance), h("td", { class: "ex" }, x.exemple), h("td", {}, sel), h("td", {}, btn));
+      }))));
+    return h("div", { class: "card" },
+      h("div", { class: "item" }, h("strong", {}, r.fichier), h("span", { class: "pill ok" }, "contrôles bloquants passés")),
+      h("p", {}, fmtI(r.lignes) + " lignes · débit " + fmtN(r.total_debit) + " = crédit " + fmtN(r.total_credit) + " : identiques à la source."),
+      h("p", { class: "muted" }, "Cellules modifiées : " + (Object.entries(r.champs).map(([k, v]) => k + " " + fmtI(v)).join(" · ") || "aucune")
+        + (Object.keys(r.codes).length ? " · numéros de compte remplacés : " + Object.entries(r.codes).map(([k, v]) => k + " " + fmtI(v)).join(", ") : "")
+        + (Object.keys(r.sensibles).length ? " · motifs sensibles : " + Object.entries(r.sensibles).map(([k, v]) => k + " " + fmtI(v)).join(", ") : "")),
+      r.alertes.map((a) => msg(lvl[a.level], a.message)),
+      resid,
+      r.prenoms.length > 0 && h("details", {}, h("summary", {}, r.prenoms.length + " prénom(s) / nom(s) isolé(s) de personnes pseudonymisées"),
+        h("table", {}, h("tbody", {}, r.prenoms.map((x) => h("tr", {}, h("td", {}, x.mot), h("td", { class: "num" }, x.occurrences), h("td", {}, "→ " + x.pseudo)))))),
+      r.non_cochees.length > 0 && h("details", {}, h("summary", {}, r.non_cochees.length + " entité(s) non cochée(s) visibles en clair"),
+        h("table", {}, h("tbody", {}, r.non_cochees.map((x) => h("tr", {}, h("td", {}, x.nom), h("td", {}, x.cat), h("td", { class: "num" }, x.occurrences)))))),
+      h("details", {}, h("summary", {}, "Remplacements par entité (" + r.remplacements.length + ")"),
+        h("table", {}, h("thead", {}, h("tr", {}, ["Pseudonyme", "Catégorie", "Nom (local)", "Remplacements"].map((x) => h("th", {}, x)))),
+          h("tbody", {}, r.remplacements.map((x) => h("tr", {}, h("td", {}, x.pseudo), h("td", {}, x.cat), h("td", {}, x.nom), h("td", { class: "num" }, fmtI(x.n))))))));
+  }
+  function showResults(out) {
+    const ta = h("textarea", { readonly: true, rows: 14, class: "consigne" }); ta.value = out.consigne;
+    const copy = h("button", {}, "Copier la consigne"); copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(out.consigne); copy.textContent = "Consigne copiée ✓"; } catch (_) { ta.select(); copy.textContent = "Sélectionnée : copiez avec Ctrl+C"; } });
+    put(res, msg("ok", out.resultats.length + " fichier(s) pseudonymisé(s) dans : " + out.dossier_sortie),
+      h("div", { class: "actions" }, h("button", { class: "ghost", onclick: () => api("POST", "/api/open-folder", { which: "pseudo" }).then((r) => r.ok || box.append(msg("warn", r.message))) }, "Ouvrir le dossier des fichiers pseudonymisés")),
+      out.resultats.map(fileCard),
+      h("h2", {}, "Consigne à coller dans Claude avec le FEC"),
+      h("div", { class: "card" }, h("p", { class: "muted" }, "À coller avec le FEC pseudonymisé. Elle est aussi enregistrée dans le dossier (fichier CONSIGNE-CLAUDE) et ne contient aucun nom réel."), ta, h("div", { class: "actions" }, copy)),
+      h("div", { class: "msg warn" }, "Seuls les fichiers de ce dossier peuvent être transmis à Claude. Les futurs fichiers « _REEL » contiendront des données réelles : ne les collez jamais dans un outil d'IA."));
+  }
+  run.addEventListener("click", async () => {
+    box.replaceChildren(); run.disabled = true; run.textContent = "Pseudonymisation en cours…";
+    try { showResults(await api("POST", "/api/pseudo/run", { replace_codes: repl.checked })); }
+    catch (e) { box.append(msg("err", e.message)); }
+    run.disabled = !st.pret; run.textContent = "Pseudonymiser à nouveau";
+  });
+  main.append(h("h1", {}, "Pseudonymisation du FEC"),
+    h("p", { class: "muted" }, "Crée un NOUVEAU fichier par exercice, dans un dossier dédié, avec les noms remplacés par des pseudonymes (CAT-0000). Le FEC source n'est jamais modifié. Les montants, dates, codes journaux, numéros d'écritures et lettrages restent identiques."),
+    h("div", { class: "card" },
+      st.blocages.map((b) => msg("err", b)), st.notes.map((n) => msg("warn", n)),
+      h("p", {}, h("strong", {}, st.n_fec + " FEC"), " (exercices : " + (st.exercices.filter(Boolean).join(", ") || "?") + ") · ", h("strong", {}, st.n_entites + " entité(s)"), " à pseudonymiser · sortie : " + st.dossier_sortie),
+      h("label", { class: "flt" }, repl, " Remplacer par un code neutre les numéros de compte qui contiennent un nom (recommandé)"),
+      h("div", { class: "actions" }, run, h("button", { class: "ghost", onclick: () => go("noms") }, "← Revenir à la validation des noms"))),
+    box, res);
 }
 
 // ------------------------------------------------------------------ aide et test
@@ -540,8 +606,9 @@ async function renderAide() {
     h("div", { class: "card" }, h("ol", {},
       h("li", {}, "Import du FEC (ou démo) : contrôles d'intégrité, détection du format et des dates. Aucune saisie préalable."),
       h("li", {}, "Noms à valider : identifier la société (proposée à partir du FEC), puis valider dirigeants, associés, sociétés liées et tiers ; regroupements proposés, conflits, tiers usuels maintenus."),
+      h("li", {}, "Pseudonymisation : fichier produit dans le dossier PSEUDO, contrôles bloquants (lignes et totaux), alertes, noms résiduels, consigne à copier."),
       h("li", {}, "Fermer puis rouvrir l'application : le dossier et ses décisions doivent être retrouvés (phrase secrète demandée)."))),
-    h("p", { class: "muted" }, "À venir : pseudonymisation du FEC, texte libre, ré-identification des restitutions."));
+    h("p", { class: "muted" }, "À venir : pseudonymisation de texte libre et ré-identification des restitutions."));
 }
 
 // ------------------------------------------------------------------ boutons du haut

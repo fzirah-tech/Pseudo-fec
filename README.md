@@ -3,8 +3,9 @@
 Outil **local et hors ligne** de cabinet : pseudonymise les FEC avant analyse dans Claude, puis
 ré-identifie les restitutions. Interface HTML servie sur `127.0.0.1` par l'application elle-même.
 
-**État : jalon (b)** — import et contrôle du FEC, puis détection et validation des noms (aucune saisie préalable).
-Prochains jalons : (c) pseudonymisation du FEC, (d) texte libre,
+**État : jalon (c)** — import et contrôle du FEC, détection et validation des noms, **pseudonymisation du FEC**
+(rapport, seconde passe de contrôle, consigne Claude).
+Prochains jalons : (d) texte libre,
 (e–g) ré-identification DOCX/XLSX/PPTX, (h) verrouillage et audit, (i) packaging Windows.
 
 ## Dossier portable prêt à copier (recommandé pour le pilote)
@@ -57,6 +58,17 @@ Les tests n'utilisent que des données synthétiques (`tests/synth.py`) ; ne jam
 3. **Noms à valider** : l'outil propose la société (raison sociale suggérée à partir des libellés, SIREN prérempli),
    ses dirigeants et associés, ses sociétés liées, ses clients, fournisseurs et salariés ; l'utilisateur valide.
    La fiche société reste disponible, **facultative**, pour ajouter à l'avance ce que le FEC ne révèle pas.
+
+## Pseudonymisation du FEC (jalon c)
+
+Un NOUVEAU fichier par exercice dans `…/sorties/<code>/PSEUDO/` (`DOSSIER-SOC0001_FEC_2025_PSEUDO.txt` : ni SIREN ni nom ;
+jamais d'écrasement : `_v2`, `_v3`…), même structure, séparateur, encodage et fin de ligne. Jamais modifiés : montants, dates,
+codes journaux, numéros d'écritures, lettrage, numéros de compte numériques. Un `CompAuxNum` / `CompteNum` qui reprend un nom
+reçoit un code neutre cohérent (`FRN0007`, ou `401FRN0007`). **Contrôles bloquants** : lignes et totaux débit/crédit identiques
+à la source, colonnes protégées inchangées. **Seconde passe** sur la sortie : noms propres restants, prénoms/noms isolés des
+personnes pseudonymisées, entités non cochées, alertes de risque résiduel (salariés peu nombreux, tiers unique sur un compte).
+Livrés aussi : `CONSIGNE-CLAUDE.txt` à coller avec le FEC et `RAPPORT-PSEUDONYMISATION.txt` (sans aucun nom réel).
+La liste des noms résiduels n'est affichée qu'à l'écran, en local.
 
 ## Détection des noms (jalon b)
 

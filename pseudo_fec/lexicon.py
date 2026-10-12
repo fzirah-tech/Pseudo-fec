@@ -37,6 +37,7 @@ impot impots taxe taxes cfe cvae tvs ir is urssaf dgfip sie
 paiement carte retrait depot versement dépôt virt recu recue reçu
 iban bic swift mandat rum ics bancaire banque agence siege code client fournisseur
 mme mr mlle monsieur madame
+frn cli sal ass grp soc tie siret siren nir email tel
 """.split())
 
 SALARY_WORDS = set("""
