@@ -24,7 +24,7 @@ from .errors import PseudoFecError
 from .fec_io import FecFile, analyse, parse_fec
 from .generic_list import Whitelist
 from .lexicon import STOPWORDS
-from .parties import expand_truncations
+from .parties import expand_truncations, is_person, person_orders
 from .textmatch import LEGAL_FORMS, LINK_WORDS, NameMatcher, fold, tokens
 
 PROTECTED = ("JournalCode", "EcritureNum", "EcritureDate", "PieceDate", "Debit", "Credit", "EcritureLet",
@@ -67,6 +67,10 @@ def _truncations(ents: list[dict[str, Any]], base: list[tuple[str, str, int]]) -
         if cats.get(u) in ("GRP", "SOC", "DIV"):
             for x in expand_truncations(t):
                 found.setdefault(" ".join(tokens(x)), set()).add(u)
+    for e in ents:        # une personne s'écrit nom-prénom ou prénom-nom : tous les ordres sont recherchés
+        if is_person(e["nom"], e["cat"]) or (e["cat"] in ("SAL", "ASS") and len(tokens(e["nom"])) >= 2):
+            for x in person_orders(e["nom"]):
+                found.setdefault(" ".join(tokens(x)), set()).add(e["uid"])
     return [(x, next(iter(us)), 1) for x, us in found.items()
             if len(us) == 1 and not (exact.get(x, set()) - us)]
 

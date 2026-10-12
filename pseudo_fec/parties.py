@@ -78,6 +78,22 @@ def expand_truncations(texte: str, min_total: int = 6) -> list[str]:
     return [t[:start] + word[:k] for k in range(len(word) - 1, floor - 1, -1) if k >= 2 and len(t[:start] + word[:k]) >= min_total]
 
 
+def person_orders(nom: str) -> list[str]:
+    """Autres ordres d'écriture d'un nom de personne (« VILCHEZ Nathalie » -> « Nathalie VILCHEZ »)."""
+    toks = [t for t in TOKEN_RE.findall(nom) if fold(t) not in LINK_WORDS and fold(t) not in TITLES]
+    if not 2 <= len(toks) <= 3:
+        return []
+    import itertools
+    seen = {fold(nom)}
+    out = []
+    for perm in itertools.permutations(toks):
+        t = " ".join(perm)
+        if fold(t) not in seen:
+            seen.add(fold(t))
+            out.append(t)
+    return out
+
+
 def is_person(nom: str, cat: str) -> bool:
     return (cat in ("SAL", "ASS") and not any(fold(t) in LEGAL_FORMS for t in TOKEN_RE.findall(nom))) \
         or (cat in ("TIE", "CLI", "FRN", "DIV") and looks_like_person(nom))

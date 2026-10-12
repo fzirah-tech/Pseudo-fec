@@ -415,7 +415,9 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
             if not name or fold(name) in STOPWORDS:
                 continue
             c = get(name, name, refine_category(name, p3, category_for_prefix(p3)), "compte")
-            if all(_kind(t) == "x" for t in TOKEN_RE.findall(name)) and c.statut != "connu" and p3 != "467":
+            toks_ = TOKEN_RE.findall(name)
+            descriptive = len(toks_) < 2 or any(fold(t) in STOPWORDS or fold(t) in hv.vocab for t in toks_)
+            if all(_kind(t) == "x" for t in toks_) and c.statut != "connu" and p3 != "467" and descriptive:
                 c.confiance = "faible"        # intitulé tout en minuscules : plutôt descriptif (« salaires 2022 ») qu'un nom
                 c.notes.append("Intitulé de compte en minuscules : probablement descriptif, non coché par défaut.")
             c.variants.setdefault(name, 0)
@@ -428,13 +430,15 @@ def detect(fecs: list[FecFile], payload: dict[str, Any], priority_prefixes: dict
     # 4. libellés : tiers connus puis noms propres inconnus
     # fréquence des mots : un mot très fréquent dans les libellés est du vocabulaire, pas un nom
     word_freq: Counter = Counter()
-    lower_words: set[str] = set()      # un nom propre s'écrit rarement en minuscules : mot courant
+    low_n: Counter = Counter()          # un nom propre s'écrit rarement en minuscules : mot courant,
+    cap_n: Counter = Counter()          # sauf s'il s'écrit plus souvent avec une majuscule (« NATHALIE VILCHEZ » / « Damien vilchez »)
     for lib, e in hv.libs.items():
         for t in set(tokens(lib)):
             word_freq[t] += e["n"]
         for m in TOKEN_RE.finditer(lib):
-            if m.group()[0].islower() and len(m.group()) >= 3:
-                lower_words.add(fold(m.group()))
+            if len(m.group()) >= 3:
+                (low_n if m.group()[0].islower() else cap_n)[fold(m.group())] += e["n"]
+    lower_words = {w for w, n in low_n.items() if n >= cap_n.get(w, 0)}
     total_lines = max(hv.n_lines, 1)
 
     def is_common(f: str) -> bool:

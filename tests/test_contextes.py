@@ -366,3 +366,22 @@ def test_comptes_divers_prefixe_div_minuscules_du_467_et_pseudonymisation_partou
     txt = out.data.decode() if hasattr(out, "data") else str(out)
     for mot in ("marchetti", "MOREAU", "GAUDIN"):
         assert mot.lower() not in txt.lower(), mot            # y compris dans les achats (hors 467)
+
+
+def test_fuite_paie_ordre_inverse_et_nom_ecrit_en_minuscules_dans_les_comptes():
+    """Régression : compte « vilchez nathalie » (minuscules) et libellé « NATHALIE VILCHEZ » (ordre inverse)."""
+    lines = []
+    for i in range(1, 6):
+        lines += [("OD", i, "421010", "vilchez nathalie", "", "", f"E-VIR SEPA NATHALIE VILCHEZ {i}", "10,00", "0,00"),
+                  ("OD", i, "512000", "Banque", "", "", f"E-VIR SEPA NATHALIE VILCHEZ {i}", "0,00", "10,00")]
+    lines += [("OD", 9, "421020", "Damien vilchez", "", "", "Paie Damien vilchez", "10,00", "0,00"),
+              ("OD", 9, "512000", "Banque", "", "", "Paie Damien vilchez", "0,00", "10,00")]
+    fec, p = mini(lines), new_payload("D")
+    res = detect([fec], p, PREF, WL)
+    assert by_name(res, "vilchez nathalie").checked        # compte individualisé : plus classé « descriptif »
+    apply_validation(p, _valide(res))
+    for c in entity_conflicts(p):                      # nom de famille commun à plusieurs entités : arbitrage de l'utilisateur
+        arbitrate(p, c["texte"], c["uids"][0])
+    out = pseudonymize_fec(fec, p, "D", True, WL, PREF, CFG["contexts"])
+    txt = out.data.decode() if hasattr(out, "data") else str(out)
+    assert "NATHALIE" not in txt and "VILCHEZ" not in txt and "Damien" not in txt
